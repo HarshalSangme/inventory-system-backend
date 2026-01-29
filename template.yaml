@@ -26,7 +26,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub 'inventory-system-backend-${EnvironmentName}'
-      CodeUri: .
+      CodeUri: build/
       Handler: lambda_handler.handler
       Runtime: python3.11
       MemorySize: 512
@@ -42,9 +42,9 @@ Resources:
         ApiEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref InventoryApi
             Path: /{proxy+}
             Method: ANY
+            RestApiId: !Ref InventoryApi
       Layers:
         - !Ref DependenciesLayer
 
@@ -53,27 +53,18 @@ Resources:
     Type: AWS::Serverless::LayerVersion
     Properties:
       LayerName: !Sub 'inventory-dependencies-${EnvironmentName}'
-      ContentUri: python_dependencies/
+      ContentUri: build/python_dependencies/
       CompatibleRuntimes:
         - python3.11
 
   # API Gateway
   InventoryApi:
-    Type: AWS::ApiGateway::RestApi
+    Type: AWS::Serverless::Api
     Properties:
+      StageName: !Ref EnvironmentName
       Name: !Sub 'inventory-system-api-${EnvironmentName}'
       Description: Inventory Management System API
-      EndpointConfiguration:
-        Types:
-          - REGIONAL
-
-  ApiDeployment:
-    Type: AWS::ApiGateway::Deployment
-    DependsOn:
-      - InventoryBackendFunction
-    Properties:
-      RestApiId: !Ref InventoryApi
-      StageName: !Ref EnvironmentName
+      EndpointConfiguration: REGIONAL
 
   # DynamoDB Table (optional, for future scalability)
   InventoryTable:
