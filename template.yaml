@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Inventory Management System Backend - FastAPI on Lambda'
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.11
+    Environment:
+      Variables:
+        PYTHONPATH: /var/task
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment environment
+
+Resources:
+  # Lambda Function
+  InventoryBackendFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'inventory-system-backend-${EnvironmentName}'
+      CodeUri: .
+      Handler: lambda_handler.handler
+      Runtime: python3.11
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InventoryTable
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref EnvironmentName
+          DYNAMODB_TABLE: !Ref InventoryTable
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref InventoryApi
+            Path: /{proxy+}
+            Method: ANY
+      Layers:
+        - !Ref DependenciesLayer
+
+  # Lambda Layer for dependencies
+  DependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub 'inventory-dependencies-${EnvironmentName}'
+      ContentUri: python_dependencies/
+      CompatibleRuntimes:
+        - python3.11
+
+  # API Gateway
+  InventoryApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub 'inventory-system-api-${EnvironmentName}'
+      Description: Inventory Management System API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - InventoryBackendFunction
+    Properties:
+      RestApiId: !Ref InventoryApi
+      StageName: !Ref EnvironmentName
+
+  # DynamoDB Table (optional, for future scalability)
+  InventoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'inventory-${EnvironmentName}'
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${InventoryApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}'
+  FunctionArn:
+    Description: Lambda Function ARN
+    Value: !GetAtt InventoryBackendFunction.Arn
+  FunctionName:
+    Description: Lambda Function Name
+    Value: !Ref InventoryBackendFunction
