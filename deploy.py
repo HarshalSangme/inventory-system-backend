@@ -1,358 +1,259 @@
 #!/usr/bin/env python3
 """
-AWS Lambda Deployment Script for Inventory System Backend
-Automates building, packaging, and deploying the FastAPI backend to AWS Lambda
+Inventory System Backend - AWS Lambda Deployment Script
+Deploys FastAPI backend to AWS Lambda with API Gateway
 """
 
 import os
 import sys
-import shutil
 import subprocess
 import json
+import shutil
 from pathlib import Path
-from datetime import datetime
 
-# Configuration
-PROJECT_ROOT = Path(__file__).parent
-BUILD_DIR = PROJECT_ROOT / "build"
-PYTHON_DIR = BUILD_DIR / "python" / "lib" / "python3.11" / "site-packages"
-REQUIREMENTS_FILE = PROJECT_ROOT / "requirements.txt"
-LAMBDA_HANDLER = PROJECT_ROOT / "lambda_handler.py"
-APP_DIR = PROJECT_ROOT / "app"
-ZIP_FILE = PROJECT_ROOT / "inventory-backend-lambda.zip"
-S3_BUCKET = "inventory-system-deploy-dev"
-STACK_NAME = "inventory-backend-dev"
-REGION = "us-east-1"
-ENVIRONMENT = "dev"
-
-# Color output
-class Colors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-
-def print_header(text):
-    print(f"\n{Colors.HEADER}{Colors.BOLD}{'='*70}{Colors.ENDC}")
-    print(f"{Colors.HEADER}{Colors.BOLD}{text:^70}{Colors.ENDC}")
-    print(f"{Colors.HEADER}{Colors.BOLD}{'='*70}{Colors.ENDC}\n")
-
-def print_step(text):
-    print(f"{Colors.OKBLUE}▶ {text}{Colors.ENDC}")
-
-def print_success(text):
-    print(f"{Colors.OKGREEN}✓ {text}{Colors.ENDC}")
-
-def print_error(text):
-    print(f"{Colors.FAIL}✗ {text}{Colors.ENDC}")
-
-def print_warning(text):
-    print(f"{Colors.WARNING}⚠ {text}{Colors.ENDC}")
-
-def run_command(cmd, description="", check=True):
-    """Execute a shell command"""
-    print_step(description or " ".join(cmd) if isinstance(cmd, list) else cmd)
-    try:
-        if isinstance(cmd, str):
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=check)
-        else:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=check)
+class LambdaDeployer:
+    def __init__(self):
+        self.backend_dir = Path(__file__).parent
+        self.build_dir = self.backend_dir / "build"
+        self.zip_file = self.backend_dir / "lambda-package.zip"
+        self.s3_bucket = "inventory-system-deploy-dev"
+        self.stack_name = "inventory-backend-dev"
+        self.region = "us-east-1"
+        self.env_name = "dev"
         
-        if result.stdout:
-            print(result.stdout.strip())
-        if result.returncode == 0:
-            print_success("Command completed successfully")
-        return result
-    except subprocess.CalledProcessError as e:
-        print_error(f"Command failed with exit code {e.returncode}")
-        if e.stderr:
-            print(f"Error: {e.stderr}")
-        if check:
-            sys.exit(1)
-        return e
-
-def clean_build_directory():
-    """Remove old build directory"""
-    print_step("Cleaning old build directory")
-    if BUILD_DIR.exists():
-        shutil.rmtree(BUILD_DIR)
-        print_success("Build directory removed")
+    def log(self, message, status="INFO"):
+        """Print colored log messages"""
+        colors = {
+            "INFO": "\033[94m",
+            "SUCCESS": "\033[92m",
+            "ERROR": "\033[91m",
+            "WARNING": "\033[93m"
+        }
+        reset = "\033[0m"
+        print(f"{colors.get(status, '')}{status}{reset} | {message}")
     
-    # Create new structure
-    PYTHON_DIR.mkdir(parents=True, exist_ok=True)
-    print_success("Created build directory structure")
-
-def install_dependencies():
-    """Install Python dependencies to build directory"""
-    print_step("Installing Python dependencies")
+    def run_command(self, cmd, check=True, shell=False):
+        """Run shell command and return output"""
+        try:
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True,
+                check=check,
+                shell=shell
+            )
+            return result.stdout.strip(), result.returncode
+        except subprocess.CalledProcessError as e:
+            self.log(f"Command failed: {e.stderr}", "ERROR")
+            raise
     
-    if not REQUIREMENTS_FILE.exists():
-        print_error(f"Requirements file not found: {REQUIREMENTS_FILE}")
-        sys.exit(1)
+    def clean_build(self):
+        """Remove old build artifacts"""
+        self.log("Cleaning old build artifacts...")
+        if self.build_dir.exists():
+            shutil.rmtree(self.build_dir)
+        if self.zip_file.exists():
+            self.zip_file.unlink()
+        self.log("Cleaned", "SUCCESS")
     
-    cmd = [
-        sys.executable, "-m", "pip", "install",
-        "-r", str(REQUIREMENTS_FILE),
-        "--target", str(PYTHON_DIR),
-        "--no-cache-dir",
-        "--platform", "manylinux2014_x86_64",
-        "--implementation", "cp",
-        "--python-version", "311",
-        "--only-binary=:all:",
-        "--upgrade"
-    ]
+    def setup_build_directory(self):
+        """Create build directory structure"""
+        self.log("Setting up build directory...")
+        self.build_dir.mkdir(exist_ok=True)
+        
+        # Copy lambda handler
+        shutil.copy(self.backend_dir / "lambda_handler.py", self.build_dir / "lambda_handler.py")
+        
+        # Copy app code
+        app_src = self.backend_dir / "app"
+        app_dst = self.build_dir / "app"
+        if app_dst.exists():
+            shutil.rmtree(app_dst)
+        shutil.copytree(app_src, app_dst)
+        
+        self.log("Build directory prepared", "SUCCESS")
     
-    result = run_command(cmd, "Installing dependencies for Lambda")
+    def install_dependencies_docker(self):
+        """Use Docker to install Linux-compatible dependencies"""
+        self.log("Installing dependencies with Docker...")
+        
+        # Check if Docker is available
+        docker_check, _ = self.run_command("docker --version", check=False)
+        if not docker_check:
+            self.log("Docker not found. Installing dependencies locally (may not work on Lambda)...", "WARNING")
+            self.install_dependencies_local()
+            return
+        
+        # Create requirements for pip in Docker
+        docker_cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{self.build_dir}:/var/task",
+            "public.ecr.aws/lambda/python:3.11",
+            "pip", "install", "-r", "/var/task/../requirements.txt",
+            "-t", "/var/task"
+        ]
+        
+        try:
+            self.log("Running Docker container for dependency installation...")
+            subprocess.run(docker_cmd, check=True)
+            self.log("Dependencies installed via Docker", "SUCCESS")
+        except subprocess.CalledProcessError:
+            self.log("Docker installation failed, trying local install...", "WARNING")
+            self.install_dependencies_local()
     
-    if result.returncode != 0:
-        print_warning("Failed to install with platform-specific wheels. Attempting standard install...")
-        # Fallback to standard install
-        cmd = [
+    def install_dependencies_local(self):
+        """Fallback: install dependencies locally"""
+        self.log("Installing dependencies locally...")
+        
+        pip_cmd = [
             sys.executable, "-m", "pip", "install",
-            "-r", str(REQUIREMENTS_FILE),
-            "--target", str(PYTHON_DIR),
-            "--no-cache-dir"
+            "-r", str(self.backend_dir / "requirements.txt"),
+            "-t", str(self.build_dir),
+            "--upgrade"
         ]
-        result = run_command(cmd, "Installing dependencies (fallback)")
+        
+        subprocess.run(pip_cmd, check=True)
+        self.log("Dependencies installed locally", "SUCCESS")
     
-    if result.returncode != 0:
-        print_error("Dependency installation failed")
-        sys.exit(1)
-
-def copy_app_code():
-    """Copy application code to build directory"""
-    print_step("Copying application code")
+    def create_zip(self):
+        """Create deployment ZIP file"""
+        self.log("Creating deployment package...")
+        
+        # Use PowerShell on Windows, zip on Unix
+        if sys.platform == "win32":
+            ps_cmd = f"""
+            $compress = @{{
+                Path = '{self.build_dir}/*'
+                DestinationPath = '{self.zip_file}'
+                CompressionLevel = 'Optimal'
+            }}
+            Compress-Archive @compress -Force
+            """
+            subprocess.run(["powershell", "-Command", ps_cmd], check=True)
+        else:
+            os.chdir(self.build_dir)
+            subprocess.run(["zip", "-r", str(self.zip_file), "."], check=True)
+            os.chdir(self.backend_dir)
+        
+        zip_size_mb = self.zip_file.stat().st_size / (1024 * 1024)
+        self.log(f"Created {self.zip_file.name} ({zip_size_mb:.2f} MB)", "SUCCESS")
     
-    # Copy lambda handler
-    if LAMBDA_HANDLER.exists():
-        shutil.copy2(LAMBDA_HANDLER, BUILD_DIR / "lambda_handler.py")
-        print_success(f"Copied lambda_handler.py")
-    else:
-        print_error(f"Lambda handler not found: {LAMBDA_HANDLER}")
-        sys.exit(1)
-    
-    # Copy app directory
-    if APP_DIR.exists():
-        if (BUILD_DIR / "app").exists():
-            shutil.rmtree(BUILD_DIR / "app")
-        shutil.copytree(APP_DIR, BUILD_DIR / "app")
-        print_success(f"Copied app directory")
-    else:
-        print_error(f"App directory not found: {APP_DIR}")
-        sys.exit(1)
-
-def create_zip_archive():
-    """Create deployment ZIP file"""
-    print_step("Creating deployment ZIP archive")
-    
-    if ZIP_FILE.exists():
-        ZIP_FILE.unlink()
-    
-    # Change to build directory to maintain correct paths
-    cwd = os.getcwd()
-    try:
-        os.chdir(BUILD_DIR.parent)
+    def upload_to_s3(self):
+        """Upload ZIP to S3"""
+        self.log("Uploading to S3...")
         
         cmd = [
-            "powershell" if sys.platform == "win32" else "bash",
-            "-Command" if sys.platform == "win32" else "-c",
-            f"Compress-Archive -Path build/* -DestinationPath {ZIP_FILE.name} -Force" if sys.platform == "win32" else f"cd build && zip -r ../{ZIP_FILE.name} . && cd .."
+            "aws", "s3", "cp",
+            str(self.zip_file),
+            f"s3://{self.s3_bucket}/",
+            "--region", self.region
         ]
         
-        result = run_command(cmd, "Creating ZIP archive")
+        output, _ = self.run_command(cmd, shell=False)
+        self.log(output, "SUCCESS")
+    
+    def delete_old_stack(self):
+        """Delete old CloudFormation stack if exists"""
+        self.log("Checking for existing stack...")
         
-        if ZIP_FILE.exists():
-            zip_size_mb = ZIP_FILE.stat().st_size / (1024 * 1024)
-            print_success(f"ZIP archive created: {zip_size_mb:.2f} MB")
+        cmd = [
+            "aws", "cloudformation", "describe-stacks",
+            "--stack-name", self.stack_name,
+            "--region", self.region
+        ]
+        
+        _, code = self.run_command(cmd, check=False)
+        
+        if code == 0:
+            self.log(f"Deleting old stack: {self.stack_name}...")
+            del_cmd = [
+                "aws", "cloudformation", "delete-stack",
+                "--stack-name", self.stack_name,
+                "--region", self.region
+            ]
+            self.run_command(del_cmd)
+            self.log("Stack deletion initiated", "SUCCESS")
+            
+            # Wait for deletion
+            import time
+            self.log("Waiting for stack deletion (this may take a minute)...")
+            time.sleep(30)
         else:
-            print_error("ZIP archive creation failed")
+            self.log("No existing stack found", "INFO")
+    
+    def deploy_with_sam(self):
+        """Deploy using SAM CLI"""
+        self.log("Deploying with AWS SAM...")
+        
+        cmd = [
+            "sam", "deploy",
+            "--template-file", str(self.backend_dir / "template.yaml"),
+            "--stack-name", self.stack_name,
+            "--s3-bucket", self.s3_bucket,
+            "--region", self.region,
+            "--parameter-overrides", f"EnvironmentName={self.env_name}",
+            "--capabilities", "CAPABILITY_NAMED_IAM"
+        ]
+        
+        try:
+            subprocess.run(cmd, check=True, cwd=str(self.backend_dir))
+            self.log("SAM deployment completed", "SUCCESS")
+            self.get_api_endpoint()
+        except subprocess.CalledProcessError as e:
+            self.log(f"SAM deployment failed: {e}", "ERROR")
+            raise
+    
+    def get_api_endpoint(self):
+        """Retrieve API endpoint from CloudFormation outputs"""
+        self.log("Retrieving API endpoint...")
+        
+        cmd = [
+            "aws", "cloudformation", "describe-stacks",
+            "--stack-name", self.stack_name,
+            "--region", self.region,
+            "--query", "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue",
+            "--output", "text"
+        ]
+        
+        endpoint, _ = self.run_command(cmd)
+        
+        if endpoint:
+            self.log(f"API Endpoint: {endpoint}", "SUCCESS")
+            
+            # Update frontend .env.production
+            env_file = self.backend_dir.parent / "frontend" / ".env.production"
+            with open(env_file, "w") as f:
+                f.write(f"VITE_API_URL={endpoint}\n")
+            self.log(f"Updated frontend .env.production", "SUCCESS")
+            
+            return endpoint
+        else:
+            self.log("Could not retrieve API endpoint", "WARNING")
+            return None
+    
+    def deploy(self):
+        """Execute full deployment"""
+        try:
+            self.log("=" * 60)
+            self.log("Starting Lambda Deployment", "INFO")
+            self.log("=" * 60)
+            
+            self.clean_build()
+            self.setup_build_directory()
+            self.install_dependencies_docker()
+            self.create_zip()
+            self.upload_to_s3()
+            self.delete_old_stack()
+            self.deploy_with_sam()
+            
+            self.log("=" * 60)
+            self.log("Deployment Complete! ✅", "SUCCESS")
+            self.log("=" * 60)
+            
+        except Exception as e:
+            self.log(f"Deployment failed: {str(e)}", "ERROR")
             sys.exit(1)
-    finally:
-        os.chdir(cwd)
-
-def upload_to_s3():
-    """Upload ZIP to S3"""
-    print_step(f"Uploading ZIP to S3 bucket: {S3_BUCKET}")
-    
-    cmd = [
-        "aws", "s3", "cp",
-        str(ZIP_FILE),
-        f"s3://{S3_BUCKET}/"
-    ]
-    
-    result = run_command(cmd, "Uploading to S3")
-    
-    if result.returncode == 0:
-        print_success(f"Successfully uploaded to S3")
-    else:
-        print_error("S3 upload failed")
-        sys.exit(1)
-
-def check_cloudformation_stack():
-    """Check if CloudFormation stack exists"""
-    print_step(f"Checking CloudFormation stack: {STACK_NAME}")
-    
-    cmd = [
-        "aws", "cloudformation", "describe-stacks",
-        "--stack-name", STACK_NAME,
-        "--region", REGION
-    ]
-    
-    result = run_command(cmd, "Checking stack status", check=False)
-    return result.returncode == 0
-
-def delete_existing_stack():
-    """Delete existing CloudFormation stack"""
-    print_warning(f"Deleting existing stack: {STACK_NAME}")
-    
-    cmd = [
-        "aws", "cloudformation", "delete-stack",
-        "--stack-name", STACK_NAME,
-        "--region", REGION
-    ]
-    
-    run_command(cmd, "Deleting old CloudFormation stack")
-    
-    # Wait for deletion
-    print_step("Waiting for stack deletion (this may take a minute)...")
-    import time
-    time.sleep(30)
-    
-    print_success("Stack deletion initiated")
-
-def deploy_with_sam():
-    """Deploy using AWS SAM"""
-    print_header("DEPLOYING TO AWS LAMBDA")
-    
-    template_file = PROJECT_ROOT / "template.yaml"
-    if not template_file.exists():
-        print_error(f"SAM template not found: {template_file}")
-        sys.exit(1)
-    
-    cmd = [
-        "sam", "deploy",
-        "--template-file", str(template_file),
-        "--stack-name", STACK_NAME,
-        "--s3-bucket", S3_BUCKET,
-        "--region", REGION,
-        "--parameter-overrides", f"EnvironmentName={ENVIRONMENT}",
-        "--capabilities", "CAPABILITY_NAMED_IAM"
-    ]
-    
-    result = run_command(cmd, "Deploying with AWS SAM")
-    
-    if result.returncode != 0:
-        print_error("SAM deployment failed")
-        sys.exit(1)
-
-def get_api_endpoint():
-    """Get the API Gateway endpoint from CloudFormation outputs"""
-    print_step("Retrieving API endpoint")
-    
-    cmd = [
-        "aws", "cloudformation", "describe-stacks",
-        "--stack-name", STACK_NAME,
-        "--region", REGION,
-        "--query", "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue",
-        "--output", "text"
-    ]
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    
-    if result.returncode == 0 and result.stdout.strip():
-        endpoint = result.stdout.strip()
-        print_success(f"API Endpoint: {endpoint}")
-        return endpoint
-    else:
-        print_error("Could not retrieve API endpoint")
-        return None
-
-def update_frontend_config(endpoint):
-    """Update frontend environment configuration with new API endpoint"""
-    print_step("Updating frontend configuration")
-    
-    env_file = PROJECT_ROOT.parent / "frontend" / ".env.production"
-    
-    try:
-        with open(env_file, "w") as f:
-            f.write(f"VITE_API_URL={endpoint}\n")
-        print_success(f"Updated {env_file} with API endpoint")
-    except Exception as e:
-        print_warning(f"Could not update frontend config: {e}")
-
-def main():
-    """Main deployment flow"""
-    print_header("INVENTORY SYSTEM BACKEND - AWS LAMBDA DEPLOYMENT")
-    
-    start_time = datetime.now()
-    
-    try:
-        # Step 1: Clean and prepare
-        print_header("STEP 1: PREPARING BUILD ENVIRONMENT")
-        clean_build_directory()
-        
-        # Step 2: Install dependencies
-        print_header("STEP 2: INSTALLING DEPENDENCIES")
-        install_dependencies()
-        
-        # Step 3: Copy application code
-        print_header("STEP 3: COPYING APPLICATION CODE")
-        copy_app_code()
-        
-        # Step 4: Create ZIP archive
-        print_header("STEP 4: CREATING DEPLOYMENT PACKAGE")
-        create_zip_archive()
-        
-        # Step 5: Upload to S3
-        print_header("STEP 5: UPLOADING TO AWS S3")
-        upload_to_s3()
-        
-        # Step 6: Check for existing stack
-        print_header("STEP 6: CHECKING CLOUDFORMATION STACK")
-        if check_cloudformation_stack():
-            delete_existing_stack()
-        
-        # Step 7: Deploy with SAM
-        deploy_with_sam()
-        
-        # Step 8: Get API endpoint
-        print_header("STEP 8: FINALIZING DEPLOYMENT")
-        endpoint = get_api_endpoint()
-        
-        if endpoint:
-            update_frontend_config(endpoint)
-        
-        # Summary
-        elapsed_time = datetime.now() - start_time
-        
-        print_header("✓ DEPLOYMENT COMPLETE")
-        print(f"{Colors.OKGREEN}Deployment Summary:{Colors.ENDC}")
-        print(f"  Stack Name: {STACK_NAME}")
-        print(f"  Region: {REGION}")
-        print(f"  Environment: {ENVIRONMENT}")
-        if endpoint:
-            print(f"  API Endpoint: {endpoint}")
-        print(f"  Elapsed Time: {elapsed_time.total_seconds():.1f} seconds")
-        print(f"\n{Colors.OKGREEN}Next Steps:{Colors.ENDC}")
-        print(f"  1. Wait for Amplify to build the frontend")
-        print(f"  2. Test the application at the Amplify URL")
-        print(f"  3. Verify API connectivity in browser DevTools")
-        
-        return 0
-        
-    except KeyboardInterrupt:
-        print_error("\nDeployment cancelled by user")
-        return 1
-    except Exception as e:
-        print_error(f"\nDeployment failed: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return 1
 
 if __name__ == "__main__":
-    sys.exit(main())
+    deployer = LambdaDeployer()
+    deployer.deploy()
