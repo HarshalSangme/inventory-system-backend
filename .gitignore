@@ -70,3 +70,8 @@ htmlcov/
 # Lambda
 .aws-sam/
 sam-tests/
+
+# Elastic Beanstalk Files
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml
