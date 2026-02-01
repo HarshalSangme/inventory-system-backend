@@ -50,3 +50,11 @@ async def get_current_active_user(current_user: models.User = Depends(get_curren
 # Convenience wrapper to reuse password verification from crud
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return crud.verify_password(plain_password, hashed_password)
+
+# Password hashing for admin creation and user registration
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
