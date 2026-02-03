@@ -88,15 +88,19 @@ def get_transactions(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.Transaction).offset(skip).limit(limit).all()
 
 def create_transaction(db: Session, transaction: schemas.TransactionCreate):
-    # Calculate Total
-    total = 0
+
+    # Calculate Subtotal
+    subtotal = 0
     for item in transaction.items:
-        total += item.price * item.quantity
-    
+        subtotal += item.price * item.quantity
+    vat_percent = getattr(transaction, 'vat_percent', 0) or 0
+    total = subtotal + (subtotal * vat_percent / 100)
+
     db_transaction = models.Transaction(
         type=transaction.type,
         partner_id=transaction.partner_id,
-        total_amount=total
+        total_amount=total,
+        vat_percent=vat_percent
     )
     db.add(db_transaction)
     db.commit()

@@ -64,6 +64,7 @@ class TransactionCreate(BaseModel):
     partner_id: int
     type: str # TransactionType
     items: List[TransactionItemBase]
+    vat_percent: Optional[float] = 0
 
 class Transaction(BaseModel):
     id: int
@@ -71,6 +72,7 @@ class Transaction(BaseModel):
     type: str
     partner_id: int
     total_amount: float
+    vat_percent: Optional[float] = 0
     items: List[TransactionItemBase] = []
     class Config:
         from_attributes = True
