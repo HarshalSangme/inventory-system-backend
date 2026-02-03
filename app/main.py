@@ -8,25 +8,40 @@ from . import crud, models, schemas, auth, database
 
 models.Base.metadata.create_all(bind=database.engine)
 
+
 app = FastAPI()
 
-# Initialize default admin user on startup
+
+# Populate data on startup if not already present
+import subprocess
+
 @app.on_event("startup")
 async def startup_event():
     db = next(database.get_db())
     try:
-        # Check if admin user exists
-        admin = crud.get_user_by_username(db, username="admin")
+        # Check if at least one user exists
+        user = db.query(models.User).first()
+        if not user:
+            print("No users found, running populate_data.py...")
+            result = subprocess.run(["python", "populate_data.py"], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"populate_data.py error: {result.stderr}")
+            else:
+                print(f"populate_data.py output: {result.stdout}")
+
+        # Ensure default admin exists
+        admin = db.query(models.User).filter(models.User.username == "admin").first()
         if not admin:
-            # Create default admin user
+            from . import auth
             admin_user = models.User(
                 username="admin",
-                email="admin@inventory.com",
                 hashed_password=auth.get_password_hash("admin123"),
+                role="admin",
                 is_active=True
             )
             db.add(admin_user)
             db.commit()
+            print("Default admin user created (username: admin, password: admin123)")
     except Exception as e:
         print(f"Startup initialization error: {e}")
     finally:

@@ -57,4 +57,6 @@ from passlib.context import CryptContext
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def get_password_hash(password: str) -> str:
+    # bcrypt only supports passwords up to 72 bytes
+    password = password[:72]
     return pwd_context.hash(password)

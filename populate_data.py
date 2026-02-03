@@ -1,4 +1,5 @@
 from app import crud, schemas, database, models
+from app.auth import get_password_hash
 from app.database import SessionLocal
 import random
 
@@ -14,6 +15,7 @@ users = [
 
 for u in users:
     try:
+        u['password'] = get_password_hash(u['password'])
         user_in = schemas.UserCreate(**u)
         crud.create_user(db, user_in)
         print(f"Created user {u['username']}")

@@ -14,7 +14,7 @@ class User(UserBase):
     id: int
     is_active: bool
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class Token(BaseModel):
     access_token: str
@@ -73,4 +73,4 @@ class Transaction(BaseModel):
     total_amount: float
     items: List[TransactionItemBase] = []
     class Config:
-        orm_mode = True
+        from_attributes = True
