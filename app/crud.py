@@ -100,7 +100,8 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
         type=transaction.type,
         partner_id=transaction.partner_id,
         total_amount=total,
-        vat_percent=vat_percent
+        vat_percent=vat_percent,
+        sales_person=transaction.sales_person
     )
     db.add(db_transaction)
     db.commit()

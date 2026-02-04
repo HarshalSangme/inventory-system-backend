@@ -62,6 +62,7 @@ class Transaction(Base):
     partner_id = Column(Integer, ForeignKey("partners.id"))
     total_amount = Column(Float, default=0.0)
     vat_percent = Column(Float, default=0.0)
+    sales_person = Column(String, nullable=True)
 
     partner = relationship("Partner", back_populates="transactions")
     items = relationship("TransactionItem", back_populates="transaction")

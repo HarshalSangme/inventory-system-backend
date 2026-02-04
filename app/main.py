@@ -168,7 +168,10 @@ def read_transactions(skip: int = 0, limit: int = 100, db: Session = Depends(dat
 
 @app.post("/transactions/", response_model=schemas.Transaction)
 def create_transaction(transaction: schemas.TransactionCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    return crud.create_transaction(db=db, transaction=transaction)
+    # Always set sales_person from the logged-in user
+    transaction_data = transaction.dict()
+    transaction_data["sales_person"] = current_user.username
+    return crud.create_transaction(db=db, transaction=schemas.TransactionCreate(**transaction_data))
 
 @app.get("/dashboard")
 def get_dashboard(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
