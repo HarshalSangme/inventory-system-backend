@@ -1,15 +1,88 @@
 from datetime import timedelta
 from typing import List
-from fastapi import FastAPI, Depends, HTTPException, status
+
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from . import crud, models, schemas, auth, database
+import pandas as pd
+import io
+import random
 
 models.Base.metadata.create_all(bind=database.engine)
 
 
 app = FastAPI()
+
+@app.post("/import-products/")
+async def import_products(file: UploadFile = File(...), db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    if not file.filename.endswith('.xlsx'):
+        raise HTTPException(status_code=400, detail="Invalid file format. Please upload an Excel file.")
+
+    try:
+        contents = await file.read()
+        # Header is on the 3rd row (index 2) based on inspection
+        df = pd.read_excel(io.BytesIO(contents), header=2)
+        
+        # Clean column names (strip whitespace)
+        df.columns = df.columns.astype(str).str.strip()
+        
+        # Print columns for debugging
+        print(f"Detected columns: {df.columns.tolist()}")
+        
+        # Column Mapping
+        # DESCRIPTION -> name
+        # RATE -> cost_price
+        # Retail Price without VAT -> price
+        # Order Qty -> stock_quantity
+        
+        required_columns = ["DESCRIPTION", "RATE", "Retail Price without VAT", "Order Qty"]
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        
+        if missing_columns:
+             raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing_columns)}. Found: {df.columns.tolist()}")
+
+        imported_count = 0
+        
+        for index, row in df.iterrows():
+            name = row["DESCRIPTION"]
+            if pd.isna(name):
+                continue
+                
+            cost_price = pd.to_numeric(row["RATE"], errors='coerce') or 0
+            price = pd.to_numeric(row["Retail Price without VAT"], errors='coerce') or 0
+            stock_quantity = pd.to_numeric(row["Order Qty"], errors='coerce') or 0
+            
+            # Generate SKU
+            # Try to use SR.NO or SR. NO
+            sr_no = row.get("SR.NO") or row.get("SR. NO")
+            
+            sku = f"SKU-{int(sr_no)}" if sr_no and not pd.isna(sr_no) else f"PROD-{random.randint(1000, 9999)}"
+            
+            # Check SKU existence
+            existing_product = db.query(models.Product).filter(models.Product.sku == sku).first()
+            if existing_product:
+                 sku = f"{sku}-{random.randint(10, 99)}"
+            
+            product_data = schemas.ProductCreate(
+                name=str(name),
+                sku=str(sku),
+                price=float(price),
+                cost_price=float(cost_price),
+                stock_quantity=int(stock_quantity),
+                min_stock_level=5,
+                description="Imported from Excel"
+            )
+            
+            crud.create_product(db=db, product=product_data)
+            imported_count += 1
+            
+        return {"message": f"Successfully imported {imported_count} products"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+
 
 
 # Populate data on startup if not already present
@@ -168,10 +241,17 @@ def read_transactions(skip: int = 0, limit: int = 100, db: Session = Depends(dat
 
 @app.post("/transactions/", response_model=schemas.Transaction)
 def create_transaction(transaction: schemas.TransactionCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    # Always set sales_person from the logged-in user
-    transaction_data = transaction.dict()
-    transaction_data["sales_person"] = current_user.username
-    return crud.create_transaction(db=db, transaction=schemas.TransactionCreate(**transaction_data))
+    try:
+        # Always set sales_person from the logged-in user
+        transaction_data = transaction.dict()
+        transaction_data["sales_person"] = current_user.username
+        return crud.create_transaction(db=db, transaction=schemas.TransactionCreate(**transaction_data))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Catch other unexpected errors
+        print(f"Error creating transaction: {e}") 
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
 @app.get("/dashboard")
 def get_dashboard(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):

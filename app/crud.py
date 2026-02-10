@@ -123,8 +123,9 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
                 product.stock_quantity += item.quantity
             elif transaction.type == models.TransactionType.SALE.value:
                 if product.stock_quantity < item.quantity:
-                    raise Exception(f"Not enough stock for product {product.name}")
+                    raise ValueError(f"Not enough stock for product {product.name}. Available: {product.stock_quantity}, Requested: {item.quantity}")
                 product.stock_quantity -= item.quantity
+
         
     db.commit()
     db.refresh(db_transaction)
