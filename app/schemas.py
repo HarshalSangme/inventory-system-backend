@@ -67,6 +67,12 @@ class TransactionCreate(BaseModel):
     vat_percent: Optional[float] = 0
     sales_person: Optional[str] = None
 
+class TransactionItemOut(TransactionItemBase):
+    id: int
+    product: Product
+    class Config:
+        from_attributes = True
+
 class Transaction(BaseModel):
     id: int
     date: datetime
@@ -75,6 +81,6 @@ class Transaction(BaseModel):
     total_amount: float
     vat_percent: Optional[float] = 0
     sales_person: Optional[str] = None
-    items: List[TransactionItemBase] = []
+    items: List[TransactionItemOut] = []
     class Config:
         from_attributes = True

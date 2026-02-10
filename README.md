@@ -161,6 +161,13 @@ pytest tests/
 ### Database lock errors
 - SQLite uses file locks. For production, use PostgreSQL
 
+### PowerShell Execution Policy Error
+If you see `PSSecurityException` or `running scripts is disabled on this system`, run this command in PowerShell as Administrator:
+```powershell
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+Then try running the command again.
+
 ### CORS errors  
 - CORS is pre-configured for localhost and Amplify domains
 - Modify `app/main.py` origins list to add new domains
