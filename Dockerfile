@@ -16,7 +16,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app code
 COPY app ./app
-COPY populate_data.py .
 COPY create_admin.py .
 
 # Expose port

@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from typing import List
 from . import models, schemas
 from passlib.context import CryptContext
 
@@ -53,6 +54,15 @@ def delete_product(db: Session, product_id: int):
     db.delete(db_product)
     db.commit()
     return True
+
+def delete_products_bulk(db: Session, product_ids: List[int]):
+    try:
+        deleted_count = db.query(models.Product).filter(models.Product.id.in_(product_ids)).delete(synchronize_session=False)
+        db.commit()
+        return deleted_count
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def get_partners(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.Partner).offset(skip).limit(limit).all()

@@ -85,27 +85,14 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
 
 
 
-# Populate data on startup if not already present
-import subprocess
-
+# Create default admin on startup if not exists
 @app.on_event("startup")
 async def startup_event():
     db = next(database.get_db())
     try:
-        # Check if at least one user exists
-        user = db.query(models.User).first()
-        if not user:
-            print("No users found, running populate_data.py...")
-            result = subprocess.run(["python", "populate_data.py"], capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"populate_data.py error: {result.stderr}")
-            else:
-                print(f"populate_data.py output: {result.stdout}")
-
         # Ensure default admin exists
         admin = db.query(models.User).filter(models.User.username == "admin").first()
         if not admin:
-            from . import auth
             admin_user = models.User(
                 username="admin",
                 hashed_password=auth.get_password_hash("admin123"),
@@ -208,6 +195,14 @@ def delete_product(product_id: int, db: Session = Depends(database.get_db), curr
     if not success:
         raise HTTPException(status_code=404, detail="Product not found")
     return {"detail": "deleted"}
+
+@app.post("/products/bulk-delete")
+def bulk_delete_products(product_ids: List[int], db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    try:
+        deleted_count = crud.delete_products_bulk(db=db, product_ids=product_ids)
+        return {"message": f"Successfully deleted {deleted_count} product(s)", "deleted_count": deleted_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete products: {str(e)}")
 
 # Partner Endpoints
 @app.get("/partners/", response_model=List[schemas.Partner])
