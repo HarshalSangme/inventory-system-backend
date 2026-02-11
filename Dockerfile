@@ -4,9 +4,10 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (including PostgreSQL client libraries)
 RUN apt-get update && apt-get install -y \
     gcc \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -18,15 +19,11 @@ COPY app ./app
 COPY populate_data.py .
 COPY create_admin.py .
 
-# Create database directory
-RUN mkdir -p /app/data
-
 # Expose port
 EXPOSE 8000
 
 # Set environment variables
-ENV DATABASE_URL=sqlite:////app/data/inventory.db
 ENV PYTHONUNBUFFERED=1
 
-# Initialize database and run app
-CMD python create_admin.py && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Run app (DATABASE_URL will be provided via environment at runtime)
+CMD python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
