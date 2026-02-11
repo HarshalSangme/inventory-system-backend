@@ -37,7 +37,7 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
         # Retail Price without VAT -> price
         # Order Qty -> stock_quantity
         
-        required_columns = ["DESCRIPTION", "RATE", "Retail Price without VAT", "Order Qty"]
+        required_columns = ["DESCRIPTION", "AMT (BHD)", "Retail Price without VAT", "Order Qty"]
         missing_columns = [col for col in required_columns if col not in df.columns]
         
         if missing_columns:
@@ -50,7 +50,7 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
             if pd.isna(name):
                 continue
                 
-            cost_price = pd.to_numeric(row["RATE"], errors='coerce') or 0
+            cost_price = pd.to_numeric(row["AMT (BHD)"], errors='coerce') or 0
             price = pd.to_numeric(row["Retail Price without VAT"], errors='coerce') or 0
             stock_quantity = pd.to_numeric(row["Order Qty"], errors='coerce') or 0
             
