@@ -1,11 +1,15 @@
 from datetime import timedelta
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from . import crud, models, schemas, auth, database
+from .invoice_pdf import generate_invoice_pdf
 import pandas as pd
 import io
 import random
@@ -251,3 +255,64 @@ def create_transaction(transaction: schemas.TransactionCreate, db: Session = Dep
 @app.get("/dashboard")
 def get_dashboard(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     return crud.get_dashboard_stats(db)
+
+# Invoice PDF Generation
+class InvoiceEditData(BaseModel):
+    invoice_number: str
+    payment_terms: str = "CREDIT"
+    due_date: Optional[str] = None
+    sales_person: str = "Mamun Hussain"
+
+@app.post("/transactions/{transaction_id}/invoice")
+def generate_invoice(
+    transaction_id: int,
+    edit_data: InvoiceEditData,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    # Get transaction with related data
+    transaction = db.query(models.Transaction).options(
+        joinedload(models.Transaction.partner),
+        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product)
+    ).filter(models.Transaction.id == transaction_id).first()
+    
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    # Convert to dict for PDF generator
+    invoice_data = {
+        'id': transaction.id,
+        'date': transaction.date.isoformat() if transaction.date else None,
+        'type': transaction.type,
+        'total_amount': float(transaction.total_amount) if transaction.total_amount else 0,
+        'vat_percent': float(transaction.vat_percent) if transaction.vat_percent else 0,
+        'partner': {
+            'name': transaction.partner.name if transaction.partner else '',
+            'address': transaction.partner.address if transaction.partner else '',
+            'phone': transaction.partner.phone if transaction.partner else '',
+        } if transaction.partner else {},
+        'items': [
+            {
+                'product': {
+                    'name': item.product.name if item.product else '',
+                    'sku': item.product.sku if item.product else '',
+                },
+                'quantity': item.quantity,
+                'price': float(item.price) if item.price else 0,
+            }
+            for item in transaction.items
+        ],
+        'sales_person': transaction.sales_person or edit_data.sales_person,
+    }
+    
+    # Generate PDF
+    pdf_buffer = generate_invoice_pdf(invoice_data, edit_data.dict())
+    
+    # Return as streaming response
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=invoice_{edit_data.invoice_number.replace('/', '_')}.pdf"
+        }
+    )
