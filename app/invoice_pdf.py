@@ -538,12 +538,12 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     
     # Phone number text (closer to icons)
     c.setFillColor(WHITE)
-    c.setFont('Helvetica-Bold', 10)
+    c.setFont('Helvetica-Bold', 11)
     c.drawString(MARGIN_LEFT + 48, text_y, '+973 36341106')
     
     # ===== EMAIL ICON (position closer to email text) =====
     email_text = 'harjinders717@gmail.com'
-    email_text_width = c.stringWidth(email_text, 'Helvetica-Bold', 10)
+    email_text_width = c.stringWidth(email_text, 'Helvetica-Bold', 11)
     email_text_x = PAGE_WIDTH - MARGIN_LEFT - email_text_width
     email_icon_x = email_text_x - icon_size - 4  # 4px gap between icon and text
     try:
@@ -556,7 +556,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     
     # Email text
     c.setFillColor(WHITE)
-    c.setFont('Helvetica-Bold', 10)
+    c.setFont('Helvetica-Bold', 11)
     c.drawString(email_text_x, text_y, email_text)
     
     # Save the PDF
