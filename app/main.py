@@ -261,7 +261,7 @@ class InvoiceEditData(BaseModel):
     invoice_number: str
     payment_terms: str = "CREDIT"
     due_date: Optional[str] = None
-    sales_person: str = "Mamun Hussain"
+    sales_person: str = ""  # Dynamic - comes from transaction's logged-in user
 
 @app.post("/transactions/{transaction_id}/invoice")
 def generate_invoice(
