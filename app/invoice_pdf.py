@@ -119,32 +119,49 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     # Row height constant
     row_height = 16
     
-    # Calculate pagination
-    # Page 1: Has header, meta box, customer box - fewer items fit
-    # Subsequent pages: More items fit (no header)
-    # Last page needs space for totals (5 rows) + signature + footer (~340pt reserved)
+    # ==================== LAYOUT CALCULATIONS ====================
+    # Fixed positions from page bottom:
+    # - Footer (image + bars): 0-116pt
+    # - Signature labels: 131pt
+    # - Stamp area: 131-211pt (80pt clear)  
+    # - Thank You line: 219pt
+    # - Bank box top: ~282pt
+    # Total fixed bottom section: 282pt
+    # Plus totals (80pt) + IN WORDS (16pt) = 96pt
+    # Total reserved: 378pt
     
-    footer_reserved = 340  # Reserve for totals, signature, footer on last page
-    items_per_page_1 = 12  # Items on page 1 (with header/customer box)
-    items_per_middle_page = 30  # Items on middle pages (no header, no footer)
+    fixed_bottom_section = 378  # Everything from page bottom: footer + sig + bank + totals + IN WORDS
+    header_height = 140  # Logo + meta box + customer box + gaps
+    table_header_height = row_height
     
-    # Calculate total pages needed
+    # Calculate items that fit per page type
+    page_height = height - MARGIN_TOP  # We draw footer at absolute 0
+    
+    # Page 1: Has header
+    available_page_1 = page_height - header_height - table_header_height - fixed_bottom_section
+    items_page_1 = max(5, int(available_page_1 / row_height))
+    
+    # Other pages: No header, just table continuing
+    available_page_other = page_height - 20 - table_header_height - fixed_bottom_section  # 20pt margin at top
+    items_page_other = max(10, int(available_page_other / row_height))
+    
+    # Calculate page distribution
     actual_items = len(item_rows)
     
-    if actual_items <= items_per_page_1:
-        # Single page - works with existing logic
-        total_pages = 1
+    if actual_items <= items_page_1:
+        items_per_page = [actual_items]
     else:
-        remaining_after_page1 = actual_items - items_per_page_1
-        # Last page needs 5 rows for totals section
-        items_last_page = items_per_middle_page - 5
+        items_per_page = [items_page_1]
+        remaining = actual_items - items_page_1
         
-        if remaining_after_page1 <= items_last_page:
-            total_pages = 2
-        else:
-            remaining_after_last = remaining_after_page1 - items_last_page
-            middle_pages = (remaining_after_last + items_per_middle_page - 1) // items_per_middle_page
-            total_pages = 2 + middle_pages
+        while remaining > items_page_other:
+            items_per_page.append(items_page_other)
+            remaining -= items_page_other
+        
+        if remaining > 0:
+            items_per_page.append(remaining)
+    
+    total_pages = len(items_per_page)
     
     # Prepare customer info
     customer_name = invoice_data.get('partner', {}).get('name', '') or invoice_data.get('customer_name', '')
@@ -183,19 +200,16 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     def draw_item_rows(canvas_obj, start_y, items_to_draw, show_totals=False):
         data_start_y = start_y
         
-        # For last page, add 5 empty rows for totals
+        # Build display rows
         display_rows = items_to_draw.copy()
+        actual_item_count = len(display_rows)
+        
         if show_totals:
-            # Add empty rows to make room for totals section
-            min_total_rows = len(display_rows) + 5
-            while len(display_rows) < min_total_rows:
+            # Add 5 rows for totals section
+            for _ in range(5):
                 display_rows.append([''] * 10)
         
-        # Ensure minimum 12 rows for layout consistency
-        while len(display_rows) < 12:
-            display_rows.append([''] * 10)
-        
-        totals_start_row = len(display_rows) - 5 if show_totals else len(display_rows)
+        totals_start_row = actual_item_count if show_totals else len(display_rows)
         totals_box_width = col_widths[-1] + col_widths[-2]
         totals_x = table_x + table_width - totals_box_width
         
@@ -311,20 +325,26 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         amount_words = f'BAHRAIN DINAR {number_to_words(int(total_gross))} ONLY'
         canvas_obj.drawString(table_x + in_words_label_w + 4, y_pos - in_words_height + 5, amount_words)
     
-    # Helper function to draw signature section
-    def draw_signature(canvas_obj):
-        footer_bar_height = 26
-        orange_line_height = 5
-        footer_img_height = 125
-        footer_top = footer_bar_height + orange_line_height + footer_img_height
+    # Helper function to draw signature section (fixed position from bottom of page)
+    def draw_signature(canvas_obj, table_end_y):
+        # Fixed positioning from page bottom (above footer)
+        # Footer height = 116pt (orange 5 + black bar 26 + image 85)
+        footer_top = 116
         
-        sig_line_y = footer_top + 12
-        stamp_area_y = sig_line_y + 80
-        thank_you_y = stamp_area_y + 20
+        # Signature labels line - positioned above footer with small gap
+        sig_line_y = footer_top + 15
+        
+        # Stamp/signature area - 80pt clear space above sig labels
+        stamp_area_top = sig_line_y + 80
+        
+        # "Thank You" message at top of stamp area
+        thank_you_y = stamp_area_top + 8
+        
+        # Bank box - positioned above Thank You
         bank_box_height = 48
-        bank_y = thank_you_y + 20 + bank_box_height
+        bank_y = thank_you_y + 25 + bank_box_height
         
-        # Bank details box
+        # Bank details box (left side)
         bank_box_width = 160
         canvas_obj.setStrokeColor(BLACK)
         canvas_obj.roundRect(MARGIN_LEFT, bank_y - bank_box_height, bank_box_width, bank_box_height, 3, fill=0, stroke=1)
@@ -353,6 +373,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         middle_x = width / 2 - 60
         canvas_obj.drawString(middle_x + 105, sig_line_y + 15, today.strftime('%d-%m-%Y'))
         
+        # Signature labels row
         canvas_obj.setFont('Helvetica', 7)
         canvas_obj.drawString(MARGIN_LEFT, sig_line_y, 'Authorized Signatory/STAMP')
         
@@ -444,22 +465,31 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         shop_name_path = os.path.join(static_dir, 'Shop_Name.jpg')
         shop_address_path = os.path.join(static_dir, 'Shop_Address.jpg')
         
+        # Logo positioning
         logo_size = 60
+        logo_x = MARGIN_LEFT
+        logo_y = y - logo_size
+        
+        # Text images start right after logo with small gap
+        text_x = logo_x + logo_size + 5
+        
         try:
             if os.path.exists(logo_path):
-                canvas_obj.drawImage(logo_path, MARGIN_LEFT, y - logo_size, width=logo_size, height=logo_size, preserveAspectRatio=True, mask='auto')
+                canvas_obj.drawImage(logo_path, logo_x, logo_y, width=logo_size, height=logo_size, preserveAspectRatio=True, mask='auto')
         except Exception as e:
             print(f"Could not load logo: {e}")
         
+        # Shop name - aligned with top of logo
         try:
             if os.path.exists(shop_name_path):
-                canvas_obj.drawImage(shop_name_path, MARGIN_LEFT + logo_size - 18, y - 38, width=220, height=38, preserveAspectRatio=True)
+                canvas_obj.drawImage(shop_name_path, text_x, y - 35, width=220, height=35, preserveAspectRatio=True)
         except Exception as e:
             print(f"Could not load shop name: {e}")
         
+        # Shop address - below shop name, larger size
         try:
             if os.path.exists(shop_address_path):
-                canvas_obj.drawImage(shop_address_path, MARGIN_LEFT + logo_size - 18, y - 60, width=200, height=20, preserveAspectRatio=True)
+                canvas_obj.drawImage(shop_address_path, text_x, y - 58, width=220, height=22, preserveAspectRatio=True)
         except Exception as e:
             print(f"Could not load shop address: {e}")
         
@@ -572,15 +602,8 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         is_first_page = (page_num == 1)
         is_last_page = (page_num == total_pages)
         
-        # Determine items for this page
-        if is_first_page:
-            items_this_page = items_per_page_1
-        elif is_last_page:
-            items_this_page = len(item_rows) - current_item_idx
-        else:
-            items_this_page = items_per_middle_page
-        
-        # Get items for current page
+        # Get items for this page from pre-calculated distribution
+        items_this_page = items_per_page[page_num - 1]
         page_items = item_rows[current_item_idx:current_item_idx + items_this_page]
         current_item_idx += len(page_items)
         
@@ -607,8 +630,8 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             draw_totals_section(c, data_start_y, totals_start_row, totals_x, totals_box_width)
             # Draw IN WORDS row
             draw_in_words(c, table_end_y)
-            # Draw signature section
-            draw_signature(c)
+            # Draw signature section (position relative to table end)
+            draw_signature(c, table_end_y - 16)  # 16 = IN WORDS row height
             # Draw footer
             draw_footer(c)
         
