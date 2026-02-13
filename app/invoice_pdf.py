@@ -400,106 +400,114 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         
         try:
             if os.path.exists(footer_img_path):
-                canvas_obj.drawImage(footer_img_path, 0, footer_img_y,
+                # Keep only the footer image at the bottom, remove bars and text
+                canvas_obj.drawImage(footer_img_path, 0, 0,
                                     width=PAGE_WIDTH, height=footer_img_height,
                                     preserveAspectRatio=False)
         except Exception as e:
             print(f"Could not load footer image: {e}")
-        
-        canvas_obj.setFillColor(colors.Color(0.12, 0.12, 0.12))
-        canvas_obj.rect(0, footer_bar_y, PAGE_WIDTH, footer_bar_height, fill=1, stroke=0)
-        
-        canvas_obj.setFillColor(ORANGE)
-        canvas_obj.rect(0, orange_y, PAGE_WIDTH, orange_line_height, fill=1, stroke=0)
-        
-        icon_center_y = footer_bar_y + footer_bar_height / 2
-        text_y = footer_bar_y + 8
-        icon_size = 16
-        icon_y = icon_center_y - icon_size / 2
-        
-        phone_icon_path = os.path.join(static_dir, 'phone_white_logo.png')
-        whatsapp_icon_path = os.path.join(static_dir, 'whatsapp_logo.png')
-        email_icon_path = os.path.join(static_dir, 'email_white_logo.png')
-        
-        try:
-            if os.path.exists(phone_icon_path):
-                canvas_obj.drawImage(phone_icon_path, MARGIN_LEFT + 8, icon_y,
-                                    width=icon_size, height=icon_size,
-                                    preserveAspectRatio=True, mask='auto')
-        except Exception as e:
-            print(f"Could not load phone icon: {e}")
-        
-        try:
-            if os.path.exists(whatsapp_icon_path):
-                canvas_obj.drawImage(whatsapp_icon_path, MARGIN_LEFT + 28, icon_y,
-                                    width=icon_size, height=icon_size,
-                                    preserveAspectRatio=True, mask='auto')
-        except Exception as e:
-            print(f"Could not load whatsapp icon: {e}")
-        
-        canvas_obj.setFillColor(WHITE)
-        canvas_obj.setFont('Helvetica-Bold', 11)
-        canvas_obj.drawString(MARGIN_LEFT + 48, text_y, '+973 36341106')
-        
-        email_text = 'harjinders717@gmail.com'
-        email_text_width = canvas_obj.stringWidth(email_text, 'Helvetica-Bold', 11)
-        email_text_x = PAGE_WIDTH - MARGIN_LEFT - email_text_width
-        email_icon_x = email_text_x - icon_size - 4
-        try:
-            if os.path.exists(email_icon_path):
-                canvas_obj.drawImage(email_icon_path, email_icon_x, icon_y,
-                                    width=icon_size, height=icon_size,
-                                    preserveAspectRatio=True, mask='auto')
-        except Exception as e:
-            print(f"Could not load email icon: {e}")
-        
-        canvas_obj.setFillColor(WHITE)
-        canvas_obj.setFont('Helvetica-Bold', 11)
-        canvas_obj.drawString(email_text_x, text_y, email_text)
     
     # Helper function to draw header section (page 1 only)
     def draw_header(canvas_obj):
-        y = height - MARGIN_TOP
-        
-        logo_path = os.path.join(static_dir, 'jot.png')
-        shop_name_path = os.path.join(static_dir, 'Shop_Name.jpg')
-        shop_address_path = os.path.join(static_dir, 'Shop_Address.jpg')
-        
-        # Logo positioning
-        logo_size = 60
-        logo_x = MARGIN_LEFT
-        logo_y = y - logo_size
-        
-        # Text images start right after logo with small gap
-        text_x = logo_x + logo_size + 5
+        # Start higher up (8mm from top) to utilize space better
+        top_offset = 8 * mm
+        header_img_height = 85 
+        header_img_path = os.path.join(static_dir, 'Invoice_Header.png')
         
         try:
-            if os.path.exists(logo_path):
-                canvas_obj.drawImage(logo_path, logo_x, logo_y, width=logo_size, height=logo_size, preserveAspectRatio=True, mask='auto')
+            if os.path.exists(header_img_path):
+                # Use MARGIN_LEFT and CONTENT_WIDTH to align perfectly with the boxes below
+                canvas_obj.drawImage(header_img_path, MARGIN_LEFT, height - top_offset - header_img_height, 
+                                   width=CONTENT_WIDTH, height=header_img_height, 
+                                   preserveAspectRatio=False)
         except Exception as e:
-            print(f"Could not load logo: {e}")
+            print(f"Could not load header image: {e}")
+            
+        # Start the data row (Customer, INVOCIE, Meta) exactly 12pt below the image
+        y = height - top_offset - header_img_height - 12
         
-        # Shop name - aligned with top of logo
-        try:
-            if os.path.exists(shop_name_path):
-                canvas_obj.drawImage(shop_name_path, text_x, y - 35, width=220, height=35, preserveAspectRatio=True)
-        except Exception as e:
-            print(f"Could not load shop name: {e}")
+        # Customer Details (Left side)
+        customer_box_width = 195
+        customer_box_x = MARGIN_LEFT
         
-        # Shop address - below shop name, larger size
-        try:
-            if os.path.exists(shop_address_path):
-                canvas_obj.drawImage(shop_address_path, text_x, y - 58, width=220, height=22, preserveAspectRatio=True)
-        except Exception as e:
-            print(f"Could not load shop address: {e}")
-        
-        # Meta box
-        meta_box_width = 160
+        # Meta Table (Right side)
+        meta_box_width = 150
         meta_box_x = MARGIN_LEFT + CONTENT_WIDTH - meta_box_width
-        meta_box_y = y
-        meta_row_height = 14
-        label_col_width = 80
         
+        # INVOICE banner (Center)
+        title_bar_width = 110
+        title_bar_x = customer_box_x + customer_box_width + (meta_box_x - (customer_box_x + customer_box_width) - title_bar_width) / 2
+        
+        meta_row_height = 11
+        title_bar_height = 20
+        
+        # Calculate Customer Box internal lines first to determine height
+        name_str = str(customer_name)
+        address_str = str(customer_address)
+        mobile_str = str(customer_mobile)
+        
+        label_width = 75
+        chars_per_line = 24
+        
+        name_lines = max(1, (len(name_str) + chars_per_line - 1) // chars_per_line)
+        address_lines = max(1, (len(address_str) + chars_per_line - 1) // chars_per_line)
+        mobile_lines = 1
+        
+        line_height = 10
+        padding = 8
+        total_lines = name_lines + address_lines + mobile_lines
+        customer_box_height = max(45, total_lines * line_height + padding * 2)
+        
+        # Draw everything starting at top y
+        row_top_y = y
+        
+        # 1. Draw Customer Box (Left)
+        canvas_obj.setFillColor(WHITE)
+        canvas_obj.setStrokeColor(BLACK)
+        canvas_obj.roundRect(customer_box_x, row_top_y - customer_box_height, customer_box_width, customer_box_height, 4, fill=1, stroke=1)
+        
+        canvas_obj.setFillColor(BLACK)
+        canvas_obj.setFont('Helvetica-Bold', 6)
+        y_pos = row_top_y - padding
+        canvas_obj.drawString(customer_box_x + 6, y_pos, 'CUSTOMER NAME #')
+        
+        canvas_obj.setFont('Helvetica', 6)
+        for i in range(name_lines):
+            start = i * chars_per_line
+            end = min(start + chars_per_line, len(name_str))
+            canvas_obj.drawString(customer_box_x + label_width, y_pos - i * line_height, name_str[start:end])
+        y_pos -= name_lines * line_height
+        
+        canvas_obj.setFont('Helvetica-Bold', 6)
+        canvas_obj.drawString(customer_box_x + 6, y_pos, 'ADDRESS #')
+        canvas_obj.setFont('Helvetica', 6)
+        for i in range(address_lines):
+            start = i * chars_per_line
+            end = min(start + chars_per_line, len(address_str))
+            canvas_obj.drawString(customer_box_x + label_width, y_pos - i * line_height, address_str[start:end])
+        y_pos -= address_lines * line_height
+        
+        canvas_obj.setFont('Helvetica-Bold', 6)
+        canvas_obj.drawString(customer_box_x + 6, y_pos, 'MOBILE NO #')
+        canvas_obj.setFont('Helvetica', 6)
+        canvas_obj.drawString(customer_box_x + label_width, y_pos, mobile_str)
+        
+        # 2. Draw INVOICE banner (Center)
+        # Center vertically relative to the customer box if possible, or just top-aligned
+        banner_y = row_top_y - (customer_box_height / 2) + (title_bar_height / 2) - 5
+        
+        canvas_obj.setFillColor(GRAY_DARK)
+        canvas_obj.rect(title_bar_x, banner_y - title_bar_height, title_bar_width, title_bar_height, fill=1, stroke=0)
+        canvas_obj.setFillColor(WHITE)
+        canvas_obj.setFont('Helvetica-Bold', 11)
+        canvas_obj.drawCentredString(title_bar_x + title_bar_width / 2, banner_y - 14, 'INVOICE')
+        
+        canvas_obj.setStrokeColor(BLACK)
+        canvas_obj.setLineWidth(1.2)
+        canvas_obj.line(title_bar_x, banner_y - title_bar_height - 2, title_bar_x + title_bar_width, banner_y - title_bar_height - 2)
+        canvas_obj.setLineWidth(1)
+        
+        # 3. Draw Meta Box (Right)
         meta_data = [
             ('Invoice Date:', format_date(invoice_data.get('date'))),
             ('Invoice No:', edit_data.get('invoice_number', '')),
@@ -507,92 +515,26 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             ('Due Date:', format_date(edit_data.get('due_date', ''))),
         ]
         
+        meta_label_w = 70
         for i, (label, value) in enumerate(meta_data):
-            row_y = meta_box_y - i * meta_row_height
+            row_y = row_top_y - i * meta_row_height
             
             canvas_obj.setFillColor(GRAY_DARK)
-            canvas_obj.rect(meta_box_x, row_y - meta_row_height, label_col_width, meta_row_height, fill=1, stroke=1)
+            canvas_obj.rect(meta_box_x, row_y - meta_row_height, meta_label_w, meta_row_height, fill=1, stroke=1)
             
             canvas_obj.setFillColor(WHITE)
-            canvas_obj.rect(meta_box_x + label_col_width, row_y - meta_row_height, meta_box_width - label_col_width, meta_row_height, fill=1, stroke=1)
+            canvas_obj.rect(meta_box_x + meta_label_w, row_y - meta_row_height, meta_box_width - meta_label_w, meta_row_height, fill=1, stroke=1)
             
             canvas_obj.setFillColor(WHITE)
-            canvas_obj.setFont('Helvetica-Bold', 7)
-            canvas_obj.drawString(meta_box_x + 3, row_y - meta_row_height + 4, label)
+            canvas_obj.setFont('Helvetica-Bold', 6)
+            canvas_obj.drawString(meta_box_x + 3, row_y - meta_row_height + 3, label)
             
             canvas_obj.setFillColor(BLACK)
-            canvas_obj.setFont('Helvetica', 7)
-            canvas_obj.drawString(meta_box_x + label_col_width + 3, row_y - meta_row_height + 4, str(value))
+            canvas_obj.setFont('Helvetica', 6)
+            canvas_obj.drawString(meta_box_x + meta_label_w + 3, row_y - meta_row_height + 3, str(value))
         
-        # Invoice title bar
-        title_bar_width = 130
-        title_bar_height = 22
-        title_bar_x = meta_box_x - title_bar_width - 20
-        title_bar_y = meta_box_y - 4 * meta_row_height + title_bar_height
-        
-        canvas_obj.setFillColor(GRAY_DARK)
-        canvas_obj.rect(title_bar_x, title_bar_y - title_bar_height, title_bar_width, title_bar_height, fill=1, stroke=0)
-        canvas_obj.setFillColor(WHITE)
-        canvas_obj.setFont('Helvetica-Bold', 12)
-        canvas_obj.drawCentredString(title_bar_x + title_bar_width / 2, title_bar_y - 16, 'INVOICE')
-        
-        canvas_obj.setStrokeColor(BLACK)
-        canvas_obj.setLineWidth(1.5)
-        canvas_obj.line(title_bar_x, title_bar_y - title_bar_height - 2, title_bar_x + title_bar_width, title_bar_y - title_bar_height - 2)
-        canvas_obj.setLineWidth(1)
-        
-        # Customer box
-        customer_box_y = meta_box_y - 4 * meta_row_height - 30
-        customer_box_width = 220
-        
-        name_str = str(customer_name)
-        address_str = str(customer_address)
-        mobile_str = str(customer_mobile)
-        
-        label_width = 85
-        chars_per_line = 28
-        
-        name_lines = max(1, (len(name_str) + chars_per_line - 1) // chars_per_line)
-        address_lines = max(1, (len(address_str) + chars_per_line - 1) // chars_per_line)
-        mobile_lines = 1
-        
-        line_height = 11
-        padding = 12
-        total_lines = name_lines + address_lines + mobile_lines
-        customer_box_height = max(50, total_lines * line_height + padding * 2)
-        
-        canvas_obj.setFillColor(WHITE)
-        canvas_obj.setStrokeColor(BLACK)
-        canvas_obj.roundRect(MARGIN_LEFT, customer_box_y - customer_box_height, customer_box_width, customer_box_height, 5, fill=1, stroke=1)
-        
-        canvas_obj.setFillColor(BLACK)
-        canvas_obj.setFont('Helvetica-Bold', 7)
-        
-        y_pos = customer_box_y - padding
-        canvas_obj.drawString(MARGIN_LEFT + 8, y_pos, 'CUSTOMER NAME #')
-        
-        canvas_obj.setFont('Helvetica', 7)
-        for i in range(name_lines):
-            start = i * chars_per_line
-            end = min(start + chars_per_line, len(name_str))
-            canvas_obj.drawString(MARGIN_LEFT + label_width, y_pos - i * line_height, name_str[start:end])
-        y_pos -= name_lines * line_height
-        
-        canvas_obj.setFont('Helvetica-Bold', 7)
-        canvas_obj.drawString(MARGIN_LEFT + 8, y_pos, 'ADDRESS #')
-        canvas_obj.setFont('Helvetica', 7)
-        for i in range(address_lines):
-            start = i * chars_per_line
-            end = min(start + chars_per_line, len(address_str))
-            canvas_obj.drawString(MARGIN_LEFT + label_width, y_pos - i * line_height, address_str[start:end])
-        y_pos -= address_lines * line_height
-        
-        canvas_obj.setFont('Helvetica-Bold', 7)
-        canvas_obj.drawString(MARGIN_LEFT + 8, y_pos, 'MOBILE NO #')
-        canvas_obj.setFont('Helvetica', 7)
-        canvas_obj.drawString(MARGIN_LEFT + label_width, y_pos, mobile_str)
-        
-        return customer_box_y - customer_box_height - 15
+        # Return the y position for the table, with increased gap (30pt) for clarity
+        return row_top_y - max(customer_box_height, 4 * meta_row_height) - 30
     
     # ==================== RENDER PAGES ====================
     
