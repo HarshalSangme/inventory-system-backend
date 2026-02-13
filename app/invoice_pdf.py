@@ -305,6 +305,35 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         items_sold_y = data_start_y - totals_start_row * row_height
         canvas_obj.drawString(table_x + 6, items_sold_y - row_height + 5, '*Items sold will not be taken back or returned.')
         
+        # Bank details box (Right-ish, closer to totals)
+        bank_box_height = 55
+        band_bottom_y = data_start_y - (totals_start_row + 5) * row_height
+        bank_y_bottom = band_bottom_y + 8
+        bank_box_width = 180
+        
+        # Move closer to totals_x
+        bank_box_x = totals_x - bank_box_width - 10
+        
+        canvas_obj.setStrokeColor(BLACK)
+        canvas_obj.setLineWidth(0.5)
+        canvas_obj.roundRect(bank_box_x, bank_y_bottom, bank_box_width, bank_box_height, 3, fill=0, stroke=1)
+        
+        canvas_obj.setFont('Helvetica-Bold', 7)
+        canvas_obj.setFillColor(BLACK)
+        canvas_obj.drawString(bank_box_x + 5, bank_y_bottom + bank_box_height - 12, 'BANK TRANSFER DETAILS')
+        canvas_obj.drawString(bank_box_x + 5, bank_y_bottom + bank_box_height - 24, BANK_DETAILS['name'])
+        canvas_obj.setFont('Helvetica', 7)
+        canvas_obj.drawString(bank_box_x + 5, bank_y_bottom + bank_box_height - 36, f"Name: {BANK_DETAILS['bank']}")
+        canvas_obj.drawString(bank_box_x + 5, bank_y_bottom + bank_box_height - 48, f"IBAN {BANK_DETAILS['iban']}")
+        
+        # Thank you message (Left side, One line)
+        canvas_obj.setFillColor(ORANGE)
+        canvas_obj.setFont('Helvetica-Bold', 9)
+        thank_you_y = band_bottom_y + 20
+        canvas_obj.drawString(table_x + 5, thank_you_y, 'Thank You for Your Business!')
+        
+        canvas_obj.setLineWidth(1) # Reset line width
+        
         return net_row_y - row_height
     
     # Helper function to draw IN WORDS row
@@ -312,18 +341,26 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         in_words_height = 16
         in_words_label_w = 50
         
+        # Calculate net amount for words
+        vat_percent = float(invoice_data.get('vat_percent', 0) or 0)
+        total_vat = total_gross * (vat_percent / 100)
+        final_net = total_gross + total_vat
+        display_total = float(invoice_data.get('total_amount', 0) or 0) or final_net
+        
         canvas_obj.setFillColor(GRAY_LIGHT)
         canvas_obj.rect(table_x, y_pos - in_words_height, in_words_label_w, in_words_height, fill=1, stroke=1)
         canvas_obj.setFillColor(BLACK)
-        canvas_obj.setFont('Helvetica-Bold', 5)
+        canvas_obj.setFont('Helvetica-Bold', 6)
         canvas_obj.drawString(table_x + 4, y_pos - in_words_height + 5, 'IN WORDS')
         
         canvas_obj.setFillColor(WHITE)
         canvas_obj.rect(table_x + in_words_label_w, y_pos - in_words_height, table_width - in_words_label_w, in_words_height, fill=1, stroke=1)
         canvas_obj.setFillColor(BLACK)
-        canvas_obj.setFont('Helvetica-Bold', 6)
-        amount_words = f'BAHRAIN DINAR {number_to_words(int(total_gross))} ONLY'
-        canvas_obj.drawString(table_x + in_words_label_w + 4, y_pos - in_words_height + 5, amount_words)
+        canvas_obj.setFont('Helvetica-Bold', 7)
+        # Use display_total (net) instead of just total_gross
+        amount_words = f'BAHRAIN DINAR {number_to_words(int(display_total))} ONLY'
+        # Right align the text to be below the NET AMT BHD box
+        canvas_obj.drawRightString(table_x + table_width - 6, y_pos - in_words_height + 5, amount_words)
     
     # Helper function to draw signature section (fixed position from bottom of page)
     def draw_signature(canvas_obj, table_end_y):
@@ -336,31 +373,6 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         
         # Stamp/signature area - 80pt clear space above sig labels
         stamp_area_top = sig_line_y + 80
-        
-        # "Thank You" message at top of stamp area
-        thank_you_y = stamp_area_top + 8
-        
-        # Bank box - positioned above Thank You
-        bank_box_height = 48
-        bank_y = thank_you_y + 25 + bank_box_height
-        
-        # Bank details box (left side)
-        bank_box_width = 160
-        canvas_obj.setStrokeColor(BLACK)
-        canvas_obj.roundRect(MARGIN_LEFT, bank_y - bank_box_height, bank_box_width, bank_box_height, 3, fill=0, stroke=1)
-        
-        canvas_obj.setFont('Helvetica-Bold', 6)
-        canvas_obj.setFillColor(BLACK)
-        canvas_obj.drawString(MARGIN_LEFT + 5, bank_y - 10, 'BANK TRANSFER DETAILS')
-        canvas_obj.drawString(MARGIN_LEFT + 5, bank_y - 20, BANK_DETAILS['name'])
-        canvas_obj.setFont('Helvetica', 6)
-        canvas_obj.drawString(MARGIN_LEFT + 5, bank_y - 30, f"Name: {BANK_DETAILS['bank']}")
-        canvas_obj.drawString(MARGIN_LEFT + 5, bank_y - 40, f"IBAN {BANK_DETAILS['iban']}")
-        
-        # Thank you message
-        canvas_obj.setFillColor(ORANGE)
-        canvas_obj.setFont('Helvetica-Bold', 11)
-        canvas_obj.drawString(MARGIN_LEFT, thank_you_y, 'Thank You for Your Business!')
         
         # Date value above signature row
         today = datetime.now()
@@ -574,8 +586,9 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             draw_in_words(c, table_end_y)
             # Draw signature section (position relative to table end)
             draw_signature(c, table_end_y - 16)  # 16 = IN WORDS row height
-            # Draw footer
-            draw_footer(c)
+            
+        # Draw footer on every page
+        draw_footer(c)
         
         if page_num < total_pages:
             c.showPage()
