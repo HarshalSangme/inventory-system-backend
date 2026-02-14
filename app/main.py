@@ -13,11 +13,66 @@ from .invoice_pdf import generate_invoice_pdf
 import pandas as pd
 import io
 import random
+import logging
+import time
 
-models.Base.metadata.create_all(bind=database.engine)
-
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+
+def init_database(max_retries=3, retry_delay=2):
+    """Create all database tables with retry logic for Supabase/PostgreSQL."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"Attempting to create database tables (attempt {attempt}/{max_retries})...")
+            models.Base.metadata.create_all(bind=database.engine)
+            logger.info("Database tables created successfully!")
+            return True
+        except Exception as e:
+            logger.error(f"Table creation attempt {attempt} failed: {e}")
+            if attempt < max_retries:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                logger.error("All table creation attempts failed!")
+                raise
+
+
+@app.on_event("startup")
+async def startup_event():
+    # Step 1: Create tables first
+    try:
+        init_database()
+    except Exception as e:
+        logger.error(f"CRITICAL: Could not create database tables: {e}")
+        logger.error("The application may not work correctly without database tables.")
+        # Don't return here - let it continue so the app can at least start
+        # and show meaningful errors on API calls
+
+    # Step 2: Create default admin user
+    db = next(database.get_db())
+    try:
+        admin = db.query(models.User).filter(models.User.username == "admin").first()
+        if not admin:
+            admin_user = models.User(
+                username="admin",
+                hashed_password=auth.get_password_hash("admin123"),
+                role="admin",
+                is_active=True
+            )
+            db.add(admin_user)
+            db.commit()
+            logger.info("Default admin user created (username: admin, password: admin123)")
+        else:
+            logger.info("Admin user already exists, skipping creation.")
+    except Exception as e:
+        logger.error(f"Startup initialization error: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
 
 @app.post("/import-products/")
 async def import_products(file: UploadFile = File(...), db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
@@ -33,7 +88,7 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
         df.columns = df.columns.astype(str).str.strip()
         
         # Print columns for debugging
-        print(f"Detected columns: {df.columns.tolist()}")
+        logger.info(f"Detected columns: {df.columns.tolist()}")
         
         # Column Mapping
         # DESCRIPTION -> name
@@ -86,30 +141,6 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
-
-
-
-# Create default admin on startup if not exists
-@app.on_event("startup")
-async def startup_event():
-    db = next(database.get_db())
-    try:
-        # Ensure default admin exists
-        admin = db.query(models.User).filter(models.User.username == "admin").first()
-        if not admin:
-            admin_user = models.User(
-                username="admin",
-                hashed_password=auth.get_password_hash("admin123"),
-                role="admin",
-                is_active=True
-            )
-            db.add(admin_user)
-            db.commit()
-            print("Default admin user created (username: admin, password: admin123)")
-    except Exception as e:
-        print(f"Startup initialization error: {e}")
-    finally:
-        db.close()
 
 origins = [
     "http://localhost:5173",

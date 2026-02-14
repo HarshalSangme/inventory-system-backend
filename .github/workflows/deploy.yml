@@ -1,0 +1,58 @@
+name: Build and Deploy to AWS ECR
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: inventory-backend
+
+jobs:
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag based on branch
+        id: set-tag
+        run: |
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
+            echo "IMAGE_TAG=latest" >> $GITHUB_OUTPUT
+          else
+            echo "IMAGE_TAG=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.IMAGE_TAG }} .
+
+      - name: Push Docker image to ECR
+        run: |
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.IMAGE_TAG }}
+
+      - name: Summary
+        run: |
+          echo "### ✅ Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "App Runner will auto-deploy the new image." >> $GITHUB_STEP_SUMMARY
