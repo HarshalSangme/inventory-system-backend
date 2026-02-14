@@ -75,6 +75,7 @@ class TransactionItem(Base):
     product_id = Column(Integer, ForeignKey("products.id"))
     quantity = Column(Integer)
     price = Column(Float) # Price at the moment of transaction
+    discount = Column(Float, default=0.0) # Per-item discount amount
     
     transaction = relationship("Transaction", back_populates="items")
     product = relationship("Product", back_populates="transaction_items")

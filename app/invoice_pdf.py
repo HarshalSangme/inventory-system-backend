@@ -42,14 +42,22 @@ def number_to_words(num):
             'SEVENTEEN', 'EIGHTEEN', 'NINETEEN']
     tens = ['', '', 'TWENTY', 'THIRTY', 'FORTY', 'FIFTY', 'SIXTY', 'SEVENTY', 'EIGHTY', 'NINETY']
     
+    if num == 0:
+        return ""
+    
+    prefix = ""
+    if num < 0:
+        prefix = "MINUS "
+        num = abs(num)
+        
     if num < 20:
-        return ones[int(num)]
+        return prefix + ones[int(num)]
     elif num < 100:
-        return tens[int(num) // 10] + (' ' + ones[int(num) % 10] if num % 10 else '')
+        return prefix + tens[int(num) // 10] + (' ' + ones[int(num) % 10] if num % 10 else '')
     elif num < 1000:
-        return ones[int(num) // 100] + ' HUNDRED' + (' AND ' + number_to_words(num % 100) if num % 100 else '')
+        return prefix + ones[int(num) // 100] + ' HUNDRED' + (' AND ' + number_to_words(num % 100) if num % 100 else '')
     else:
-        return str(int(num))
+        return prefix + str(int(num))
 
 def format_date(date_str):
     """Format date string to DD-MM-YYYY"""
@@ -89,11 +97,27 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     total_gross = 0
     
     item_rows = []
+    vat_percent_global = float(invoice_data.get('vat_percent', 0) or 0)
+    total_gross = 0  # sum of price*qty (before discount)
+    total_discount_all = 0  # sum of all per-item discounts
+    total_amt_after_disc = 0  # sum of (price*qty - discount)
+    total_vat_all = 0  # sum of per-item VAT
+    total_net_all = 0  # sum of per-item net amounts
+    
     for idx, item in enumerate(items):
         price = float(item.get('price', 0) or 0)
         qty = float(item.get('quantity', 0) or 0)
-        net = price * qty
-        total_gross += net
+        item_discount = float(item.get('discount', 0) or 0)
+        gross = price * qty
+        amt_after_disc = gross - item_discount
+        item_vat = amt_after_disc * (vat_percent_global / 100) if vat_percent_global > 0 else 0
+        net = amt_after_disc + item_vat
+        
+        total_gross += gross
+        total_discount_all += item_discount
+        total_amt_after_disc += amt_after_disc
+        total_vat_all += item_vat
+        total_net_all += net
         
         item_rows.append([
             str(idx + 1),
@@ -101,16 +125,17 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             str(item.get('product', {}).get('name', '') or item.get('name', '')),
             str(int(qty)),
             f'{price:.3f}',
-            str(item.get('discount', '') or ''),
-            '',
-            '',
-            str(item.get('vat', '') or ''),
+            f'{item_discount:.3f}' if item_discount > 0 else '-',
+            f'{amt_after_disc:.3f}',
+            f'{vat_percent_global:.1f}' if vat_percent_global > 0 else '-',
+            f'{item_vat:.3f}' if item_vat > 0 else '-',
             f'{net:.3f}',
         ])
     
-    # Column headers and widths - scaled to fit CONTENT_WIDTH
+    # Column headers and widths - scaled to fit CONTENT_WIDTH exactly (balanced to avoid right-side gaps)
     headers = ['SR.NO', 'ITEM CODE', 'ITEM NAME', 'QTY', 'PRICE', 'DISCOUNT', 'AMT', '%', 'VAT', 'NET AMT']
-    base_widths = [28, 55, 135, 30, 55, 55, 45, 25, 50, 75]
+    # Reduced NET AMT width, increased ITEM NAME
+    base_widths = [30, 58, 155, 32, 60, 60, 55, 28, 55, 50]
     total_base = sum(base_widths)
     table_width = CONTENT_WIDTH
     col_widths = [w * table_width / total_base for w in base_widths]
@@ -124,14 +149,11 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     # - Footer (image + bars): 0-116pt
     # - Signature labels: 131pt
     # - Stamp area: 131-211pt (80pt clear)  
-    # - Thank You line: 219pt
-    # - Bank box top: ~282pt
-    # Total fixed bottom section: 282pt
-    # Plus totals (80pt) + IN WORDS (16pt) = 96pt
-    # Total reserved: 378pt
+    # - Thank You line: 95pt (Below signatures)
+    # - Bank box: Moved to totals section (dynamic)
     
-    fixed_bottom_section = 378  # Everything from page bottom: footer + sig + bank + totals + IN WORDS
-    header_height = 140  # Logo + meta box + customer box + gaps
+    fixed_bottom_section = 300  # Reduced as bank box is now in flow
+    header_height = 140  
     table_header_height = row_height
     
     # Calculate items that fit per page type
@@ -217,14 +239,19 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         total_table_height = len(display_rows) * row_height
         canvas_obj.rect(table_x, data_start_y - total_table_height, table_width, total_table_height)
         
-        # Draw vertical lines - stop at totals_start_row for item columns
+        # Draw vertical lines for ALL columns on ALL pages
         x = table_x
         for i in range(len(col_widths) - 1):
             x += col_widths[i]
             if show_totals:
+                # On last page: draw vertical lines for all columns down to the totals separator
                 if x < totals_x:
                     canvas_obj.line(x, data_start_y, x, data_start_y - totals_start_row * row_height)
+                else:
+                    # For columns inside the totals area, draw lines only down to items
+                    canvas_obj.line(x, data_start_y, x, data_start_y - totals_start_row * row_height)
             else:
+                # On non-last pages: draw vertical lines for ALL columns full height
                 canvas_obj.line(x, data_start_y, x, data_start_y - total_table_height)
         
         if show_totals:
@@ -264,16 +291,12 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     
     # Helper function to draw totals section
     def draw_totals_section(canvas_obj, data_start_y, totals_start_row, totals_x, totals_box_width):
-        vat_percent = float(invoice_data.get('vat_percent', 0) or 0)
-        total_vat = total_gross * (vat_percent / 100)
-        final_net = total_gross + total_vat
-        display_total = float(invoice_data.get('total_amount', 0) or 0) or final_net
-        
+        # Use pre-computed totals from item processing
         totals_data = [
             ('GROSS AMT', f'{total_gross:.3f}'),
-            ('DISCOUNT', str(invoice_data.get('discount', '-') or '-')),
-            ('VAT AMT', f'{total_vat:.3f}' if total_vat > 0 else '-'),
-            ('Balance C/f', str(invoice_data.get('balance_cf', '1.500') or '1.500')),
+            ('DISCOUNT', f'{total_discount_all:.3f}' if total_discount_all > 0 else '-'),
+            ('VAT AMT', f'{total_vat_all:.3f}' if total_vat_all > 0 else '-'),
+            ('Balance C/f', f'{total_net_all:.3f}'),
         ]
         
         totals_label_width = totals_box_width * 0.55
@@ -297,13 +320,40 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         canvas_obj.setFillColor(WHITE)
         canvas_obj.setFont('Helvetica-Bold', 7)
         canvas_obj.drawString(totals_x + 6, net_row_y - row_height + 5, 'NET AMT BHD:')
-        canvas_obj.drawRightString(table_x + table_width - 6, net_row_y - row_height + 5, f'{display_total:.3f}')
+        canvas_obj.drawRightString(table_x + table_width - 6, net_row_y - row_height + 5, f'{total_net_all:.3f}')
         
         # "*Items sold..." text
+        items_sold_y = data_start_y - (totals_start_row + 4) * row_height
         canvas_obj.setFillColor(colors.Color(0.1, 0.3, 0.6))
         canvas_obj.setFont('Helvetica-Oblique', 7)
-        items_sold_y = data_start_y - totals_start_row * row_height
         canvas_obj.drawString(table_x + 6, items_sold_y - row_height + 5, '*Items sold will not be taken back or returned.')
+        
+        # === BANK DETAILS BOX ===
+        # Positioned to the left of Totals box, filling the gap
+        # Reduced width from 180 to 140
+        bank_box_width = 140
+        bank_box_height = 50
+        # Positioned slightly above the bottom of the totals box (aligned with NET AMT roughly?)
+        # Let's align it with bottom of table (same as Net Amt)
+        # User requested to lift it up to be centered relative to the totals box height (80pt) vs bank box (50pt)
+        # Gap = (80-50)/2 = 15pt. So lift bottom by 15pt.
+        bank_y = (net_row_y - row_height) + 15 + bank_box_height
+        # X position: Right aligned to the Totals box with 10pt gap
+        bank_x = totals_x - bank_box_width - 10
+        
+        canvas_obj.setStrokeColor(BLACK)
+        # Check if we have enough space for bank box, otherwise shift left
+        if bank_x < table_x: bank_x = table_x + 10 # Fallback
+        
+        canvas_obj.roundRect(bank_x, bank_y - bank_box_height, bank_box_width, bank_box_height, 3, fill=0, stroke=1)
+        
+        canvas_obj.setFont('Helvetica-Bold', 6)
+        canvas_obj.setFillColor(BLACK)
+        canvas_obj.drawString(bank_x + 5, bank_y - 11, 'BANK TRANSFER DETAILS')
+        canvas_obj.drawString(bank_x + 5, bank_y - 20, BANK_DETAILS['name'])
+        canvas_obj.setFont('Helvetica', 6)
+        canvas_obj.drawString(bank_x + 5, bank_y - 30, f"Name: {BANK_DETAILS['bank']}")
+        canvas_obj.drawString(bank_x + 5, bank_y - 40, f"IBAN: {BANK_DETAILS['iban']}")
         
         return net_row_y - row_height
     
@@ -312,79 +362,58 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         in_words_height = 16
         in_words_label_w = 50
         
+        # Draw IN WORDS label and value
         canvas_obj.setFillColor(GRAY_LIGHT)
         canvas_obj.rect(table_x, y_pos - in_words_height, in_words_label_w, in_words_height, fill=1, stroke=1)
         canvas_obj.setFillColor(BLACK)
-        canvas_obj.setFont('Helvetica-Bold', 5)
+        canvas_obj.setFont('Helvetica-Bold', 6)
         canvas_obj.drawString(table_x + 4, y_pos - in_words_height + 5, 'IN WORDS')
         
         canvas_obj.setFillColor(WHITE)
         canvas_obj.rect(table_x + in_words_label_w, y_pos - in_words_height, table_width - in_words_label_w, in_words_height, fill=1, stroke=1)
         canvas_obj.setFillColor(BLACK)
         canvas_obj.setFont('Helvetica-Bold', 6)
-        amount_words = f'BAHRAIN DINAR {number_to_words(int(total_gross))} ONLY'
-        canvas_obj.drawString(table_x + in_words_label_w + 4, y_pos - in_words_height + 5, amount_words)
+        amount_words = f'BAHRAIN DINAR {number_to_words(int(total_net_all))} ONLY'
+        canvas_obj.drawString(table_x + in_words_label_w + 3, y_pos - in_words_height + 5, amount_words)
     
-    # Helper function to draw signature section (fixed position from bottom of page)
+    # Helper function to draw signature section
     def draw_signature(canvas_obj, table_end_y):
-        # Fixed positioning from page bottom (above footer)
-        # Footer height = 116pt (orange 5 + black bar 26 + image 85)
         footer_top = 116
+        sig_line_y = footer_top + 30 # Moved up slightly
         
-        # Signature labels line - positioned above footer with small gap
-        sig_line_y = footer_top + 15
-        
-        # Stamp/signature area - 80pt clear space above sig labels
-        stamp_area_top = sig_line_y + 80
-        
-        # "Thank You" message at top of stamp area
-        thank_you_y = stamp_area_top + 8
-        
-        # Bank box - positioned above Thank You
-        bank_box_height = 48
-        bank_y = thank_you_y + 25 + bank_box_height
-        
-        # Bank details box (left side)
-        bank_box_width = 160
-        canvas_obj.setStrokeColor(BLACK)
-        canvas_obj.roundRect(MARGIN_LEFT, bank_y - bank_box_height, bank_box_width, bank_box_height, 3, fill=0, stroke=1)
-        
-        canvas_obj.setFont('Helvetica-Bold', 6)
-        canvas_obj.setFillColor(BLACK)
-        canvas_obj.drawString(MARGIN_LEFT + 5, bank_y - 10, 'BANK TRANSFER DETAILS')
-        canvas_obj.drawString(MARGIN_LEFT + 5, bank_y - 20, BANK_DETAILS['name'])
-        canvas_obj.setFont('Helvetica', 6)
-        canvas_obj.drawString(MARGIN_LEFT + 5, bank_y - 30, f"Name: {BANK_DETAILS['bank']}")
-        canvas_obj.drawString(MARGIN_LEFT + 5, bank_y - 40, f"IBAN {BANK_DETAILS['iban']}")
-        
-        # Thank you message
-        canvas_obj.setFillColor(ORANGE)
-        canvas_obj.setFont('Helvetica-Bold', 11)
-        canvas_obj.drawString(MARGIN_LEFT, thank_you_y, 'Thank You for Your Business!')
-        
-        # Date value above signature row
         today = datetime.now()
         canvas_obj.setFillColor(BLACK)
-        canvas_obj.setFont('Helvetica', 8)
+        
         sales_person = edit_data.get('sales_person', '') or invoice_data.get('sales_person', '')
         if len(sales_person) > 15:
             sales_person = sales_person[:15] + '...'
+            
+        # Center points for 3 sections
+        x1 = MARGIN_LEFT + (CONTENT_WIDTH / 6)
+        x2 = MARGIN_LEFT + (CONTENT_WIDTH / 2)
+        x3 = MARGIN_LEFT + (5 * CONTENT_WIDTH / 6)
         
-        middle_x = width / 2 - 60
-        canvas_obj.drawString(middle_x + 105, sig_line_y + 15, today.strftime('%d-%m-%Y'))
-        
-        # Signature labels row
+        # Signature Labels (Centered in their sections)
         canvas_obj.setFont('Helvetica', 7)
-        canvas_obj.drawString(MARGIN_LEFT, sig_line_y, 'Authorized Signatory/STAMP')
+        canvas_obj.drawCentredString(x1, sig_line_y, 'Authorized Signatory/STAMP')
         
         canvas_obj.setFillColor(colors.Color(0.6, 0.1, 0.1))
         canvas_obj.setFont('Helvetica', 8)
-        canvas_obj.drawString(middle_x, sig_line_y, f'Sales Person #  {sales_person}')
-        canvas_obj.drawString(middle_x + 105, sig_line_y, 'Date')
-        canvas_obj.drawString(middle_x + 140, sig_line_y, 'Time')
-        
+        # Sales Person Info in Center
+        canvas_obj.drawCentredString(x2, sig_line_y + 20, f'{sales_person}')
+        canvas_obj.drawCentredString(x2, sig_line_y + 10, f'{today.strftime("%d-%m-%Y")}    {today.strftime("%I:%M %p")}')
         canvas_obj.setFillColor(BLACK)
-        canvas_obj.drawRightString(width - MARGIN_RIGHT, sig_line_y, 'Receiver Signature')
+        canvas_obj.setFont('Helvetica', 7)
+        canvas_obj.drawCentredString(x2, sig_line_y, 'Sales Person Name')
+        
+        # Receiver Signature
+        canvas_obj.drawCentredString(x3, sig_line_y, 'Receiver Signature')
+        
+        # "Thank You for Your Business!" - Below signatures, above footer
+        thank_you_text = 'Thank You for Your Business!'
+        canvas_obj.setFillColor(ORANGE)
+        canvas_obj.setFont('Helvetica-Bold', 11)
+        canvas_obj.drawCentredString(PAGE_WIDTH / 2, 125, thank_you_text)
     
     # Helper function to draw footer
     def draw_footer(canvas_obj):
@@ -426,17 +455,17 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         # Start the data row (Customer, INVOCIE, Meta) exactly 12pt below the image
         y = height - top_offset - header_img_height - 12
         
-        # Customer Details (Left side)
-        customer_box_width = 195
+        # Customer Details (Left side) - compact width, height grows with content
+        customer_box_width = 160
         customer_box_x = MARGIN_LEFT
         
-        # Meta Table (Right side)
-        meta_box_width = 150
+        # Meta Table (Right side) - flush to right edge, wider with no gap
+        meta_box_width = 170
         meta_box_x = MARGIN_LEFT + CONTENT_WIDTH - meta_box_width
         
-        # INVOICE banner (Center)
+        # INVOICE banner (perfectly centered on the page)
         title_bar_width = 110
-        title_bar_x = customer_box_x + customer_box_width + (meta_box_x - (customer_box_x + customer_box_width) - title_bar_width) / 2
+        title_bar_x = (width - title_bar_width) / 2
         
         meta_row_height = 11
         title_bar_height = 20

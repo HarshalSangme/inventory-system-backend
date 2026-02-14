@@ -99,10 +99,14 @@ def get_transactions(db: Session, skip: int = 0, limit: int = 100):
 
 def create_transaction(db: Session, transaction: schemas.TransactionCreate):
 
-    # Calculate Subtotal
+    # Calculate Subtotal (price × qty - discount per item)
     subtotal = 0
+    total_discount = 0
     for item in transaction.items:
-        subtotal += item.price * item.quantity
+        item_total = item.price * item.quantity
+        item_discount = getattr(item, 'discount', 0) or 0
+        subtotal += item_total - item_discount
+        total_discount += item_discount
     vat_percent = getattr(transaction, 'vat_percent', 0) or 0
     total = subtotal + (subtotal * vat_percent / 100)
 
@@ -122,7 +126,8 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
             transaction_id=db_transaction.id,
             product_id=item.product_id,
             quantity=item.quantity,
-            price=item.price
+            price=item.price,
+            discount=getattr(item, 'discount', 0) or 0
         )
         db.add(db_item)
         

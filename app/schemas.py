@@ -59,6 +59,7 @@ class TransactionItemBase(BaseModel):
     product_id: int
     quantity: int
     price: float
+    discount: float = 0  # Per-item discount amount
 
 class TransactionCreate(BaseModel):
     partner_id: int

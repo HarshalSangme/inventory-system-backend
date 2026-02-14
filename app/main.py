@@ -299,6 +299,7 @@ def generate_invoice(
                 },
                 'quantity': item.quantity,
                 'price': float(item.price) if item.price else 0,
+                'discount': float(item.discount) if item.discount else 0,
             }
             for item in transaction.items
         ],
