@@ -348,3 +348,79 @@ def generate_invoice(
             "Content-Disposition": f"attachment; filename=invoice_{edit_data.invoice_number.replace('/', '_')}.pdf"
         }
     )
+
+@app.get("/transactions/{transaction_id}/invoice/pdf")
+def get_invoice_pdf(
+    transaction_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    """
+    Directly generate PDF for printing with default/existing invoice number.
+    If no invoice number exists, one is generated temporarilly or fetched if stored.
+    Currently we don't store invoice number in DB, so we generate a default one: JOT/{YEAR}/{ID}
+    """
+    # Get transaction with related data
+    transaction = db.query(models.Transaction).options(
+        joinedload(models.Transaction.partner),
+        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product)
+    ).filter(models.Transaction.id == transaction_id).first()
+    
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+        
+    # Generate default invoice number
+    # Format: JOT/YYYY/ID (padded to 3 digits)
+    year = transaction.date.year
+    invoice_number = f"JOT/{year}/{transaction.id:03d}"
+    
+    # Check if we should use different fields
+    payment_terms = "CREDIT" # Default
+    due_date = None # Default
+    
+    # Prepare edit data with defaults
+    edit_data = {
+        "invoice_number": invoice_number,
+        "payment_terms": payment_terms,
+        "due_date": due_date,
+        "sales_person": transaction.sales_person or ""
+    }
+    
+    # Prepare details for PDF generator
+    invoice_data = {
+        'id': transaction.id,
+        'date': transaction.date.isoformat() if transaction.date else None,
+        'type': transaction.type,
+        'total_amount': float(transaction.total_amount) if transaction.total_amount else 0,
+        'vat_percent': float(transaction.vat_percent) if transaction.vat_percent else 0,
+        'partner': {
+            'name': transaction.partner.name if transaction.partner else '',
+            'address': transaction.partner.address if transaction.partner else '',
+            'phone': transaction.partner.phone if transaction.partner else '',
+        } if transaction.partner else {},
+        'items': [
+            {
+                'product': {
+                    'name': item.product.name if item.product else '',
+                    'sku': item.product.sku if item.product else '',
+                },
+                'quantity': item.quantity,
+                'price': float(item.price) if item.price else 0,
+                'discount': float(item.discount) if item.discount else 0,
+            }
+            for item in transaction.items
+        ],
+        'sales_person': transaction.sales_person or "",
+    }
+    
+    # Generate PDF
+    pdf_buffer = generate_invoice_pdf(invoice_data, edit_data)
+    
+    # Return as streaming response - inline for browser viewing
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"inline; filename=invoice_{invoice_number.replace('/', '_')}.pdf"
+        }
+    )

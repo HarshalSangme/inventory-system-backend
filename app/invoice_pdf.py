@@ -36,28 +36,48 @@ BANK_DETAILS = {
 }
 
 def number_to_words(num):
-    """Convert number to words (simplified)"""
-    ones = ['', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE',
-            'TEN', 'ELEVEN', 'TWELVE', 'THIRTEEN', 'FOURTEEN', 'FIFTEEN', 'SIXTEEN',
-            'SEVENTEEN', 'EIGHTEEN', 'NINETEEN']
-    tens = ['', '', 'TWENTY', 'THIRTY', 'FORTY', 'FIFTY', 'SIXTY', 'SEVENTY', 'EIGHTY', 'NINETY']
-    
-    if num == 0:
-        return ""
-    
-    prefix = ""
-    if num < 0:
-        prefix = "MINUS "
-        num = abs(num)
+    """Convert number to words handling Bahraini Dinar (3 decimal places)"""
+    def convert_int_to_words(n):
+        ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+                'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+                'Seventeen', 'Eighteen', 'Nineteen']
+        tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
         
-    if num < 20:
-        return prefix + ones[int(num)]
-    elif num < 100:
-        return prefix + tens[int(num) // 10] + (' ' + ones[int(num) % 10] if num % 10 else '')
-    elif num < 1000:
-        return prefix + ones[int(num) // 100] + ' HUNDRED' + (' AND ' + number_to_words(num % 100) if num % 100 else '')
+        if n == 0:
+            return ""
+        
+        if n < 20:
+            return ones[int(n)]
+        elif n < 100:
+            return tens[int(n) // 10] + ('-' + ones[int(n) % 10] if n % 10 else '')
+        elif n < 1000:
+            return ones[int(n) // 100] + ' Hundred' + (' and ' + convert_int_to_words(n % 100) if n % 100 else '')
+        elif n < 1000000:
+            return convert_int_to_words(n // 1000) + ' Thousand' + (' ' + convert_int_to_words(n % 1000) if n % 1000 else '')
+        else:
+            return str(int(n))
+
+    # Split into Dinar and Fils
+    total_fils = int(round(num * 1000))
+    bd = total_fils // 1000
+    fils = total_fils % 1000
+    
+    if bd == 0:
+        bd_words = "Zero"
     else:
-        return prefix + str(int(num))
+        bd_words = convert_int_to_words(bd)
+    
+    # Pluralization for Dinar (Singular for 1, Plural for others)
+    dinar_label = "Bahraini Dinar" if bd == 1 else "Bahraini Dinars"
+    
+    result = f"{bd_words} {dinar_label}"
+    
+    if fils > 0:
+        fils_words = convert_int_to_words(fils)
+        # Fils is always plural (singular is Fil, but usually used as Fils)
+        result += f" and {fils_words} Fils"
+        
+    return result + " Only"
 
 def format_date(date_str):
     """Format date string to DD-MM-YYYY"""
@@ -88,6 +108,10 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     # Create the PDF document
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
+    
+    # Set Metadata Title
+    doc_title = f"Invoice {edit_data.get('invoice_number', 'Untitled')}"
+    c.setTitle(doc_title)
     
     # Static assets directory
     static_dir = os.path.join(os.path.dirname(__file__), '..', 'static')
@@ -239,25 +263,56 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         total_table_height = len(display_rows) * row_height
         canvas_obj.rect(table_x, data_start_y - total_table_height, table_width, total_table_height)
         
-        # Draw vertical lines for ALL columns on ALL pages
+        # Draw vertical lines for ALL columns
+        # CHANGED: Only draw lines down to the actual items, not the full box height
+        # The user wants "without vertical lines" in the empty space
+        
+        # Calculate height of actual content (items + totals if present)
+        # valid_rows = number of rows that have content or are part of totals
+        # display_rows includes padding rows, so we need to know where to stop
+        
+        # Actually, display_rows has items + padding + totals (if show_totals)
+        # If show_totals is True, we have items -> padding -> totals
+        # If show_totals is False, we have items -> padding
+        
+        # The requirement is: "In this specfific box I dont want vertical lines this spaces should be without vertical lines"
+        # This implies vertical lines should stop after the last item, and resume at totals (if present)?
+        # Or just stop after last item? 
+        # Looking at the image provided (which I can't see but user described), usually empty rows dont have lines.
+        
+        # Let's find how many rows are actual items
+        real_item_count = len(items_to_draw)
+        
+        content_bottom_y = data_start_y - real_item_count * row_height
+        
         x = table_x
         for i in range(len(col_widths) - 1):
             x += col_widths[i]
+            
+            # Draw line for the item section
+            canvas_obj.line(x, data_start_y, x, content_bottom_y)
+            
             if show_totals:
-                # On last page: draw vertical lines for all columns down to the totals separator
-                if x < totals_x:
-                    canvas_obj.line(x, data_start_y, x, data_start_y - totals_start_row * row_height)
-                else:
-                    # For columns inside the totals area, draw lines only down to items
-                    canvas_obj.line(x, data_start_y, x, data_start_y - totals_start_row * row_height)
-            else:
-                # On non-last pages: draw vertical lines for ALL columns full height
-                canvas_obj.line(x, data_start_y, x, data_start_y - total_table_height)
-        
+                # If we have totals, we might need lines in the totals section at the bottom?
+                # The totals section starts at totals_start_row
+                totals_top_y = data_start_y - totals_start_row * row_height
+                totals_bottom_y = data_start_y - total_table_height
+                
+                # Check if this column is part of the totals section (i.e. to the right of totals_x)
+                # totals_value_x is where the split happens in totals
+                # But wait, the previous code drew lines for all columns in totals?
+                # "ensure vertical lines in the totals section align perfectly"
+                
+                # Let's draw lines in the totals section ONLY
+                if x >= totals_x:
+                     canvas_obj.line(x, totals_top_y, x, totals_bottom_y)
+
         if show_totals:
-            # Draw horizontal line above "Items sold" text
+            # Draw horizontal line above "Items sold" text (separating empty space from totals)
             items_sold_separator_y = data_start_y - totals_start_row * row_height
-            canvas_obj.line(table_x, items_sold_separator_y, totals_x, items_sold_separator_y)
+            # Draw this line across the WHOLE width to close the empty box? 
+            # Usually yes.
+            canvas_obj.line(table_x, items_sold_separator_y, table_x + table_width, items_sold_separator_y)
             
             # Draw horizontal lines in totals section
             for r in range(1, len(display_rows)):
@@ -265,8 +320,15 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
                 if r >= totals_start_row:
                     canvas_obj.line(totals_x, line_y, table_x + table_width, line_y)
             
-            # Vertical line before totals
+            # Vertical line before totals (left side of totals box)
             canvas_obj.line(totals_x, data_start_y - totals_start_row * row_height, totals_x, data_start_y - total_table_height)
+        else:
+             # If not showing totals (intermediate page), we might want a bottom line for the content?
+             # Or just leave it open if it continues? 
+             # Usually strictly closed box. 
+             # If the user wants NO vertical lines in empty space, maybe they still want the box outline?
+             # total_table_height covers the full height including padding.
+             pass
         
         # Fill in item data
         canvas_obj.setFillColor(BLACK)
@@ -299,8 +361,10 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             ('Balance C/f', f'{total_net_all:.3f}'),
         ]
         
+        
         totals_label_width = totals_box_width * 0.55
-        totals_value_x = totals_x + totals_label_width
+        # Align vertical line with table column (Between VAT and Net Amt)
+        totals_value_x = totals_x + col_widths[-2]
         
         canvas_obj.setStrokeColor(BLACK)
         canvas_obj.line(totals_value_x, data_start_y - totals_start_row * row_height,
@@ -373,7 +437,9 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         canvas_obj.rect(table_x + in_words_label_w, y_pos - in_words_height, table_width - in_words_label_w, in_words_height, fill=1, stroke=1)
         canvas_obj.setFillColor(BLACK)
         canvas_obj.setFont('Helvetica-Bold', 6)
-        amount_words = f'BAHRAIN DINAR {number_to_words(int(total_net_all))} ONLY'
+        amount_words = number_to_words(total_net_all)
+        # Convert to upper case for standard invoice format
+        amount_words = amount_words.upper()
         canvas_obj.drawString(table_x + in_words_label_w + 3, y_pos - in_words_height + 5, amount_words)
     
     # Helper function to draw signature section
