@@ -56,15 +56,20 @@ async def startup_event():
     try:
         admin = db.query(models.User).filter(models.User.username == "admin").first()
         if not admin:
+            import os
+            admin_password = os.getenv("ADMIN_PASSWORD")
+            if not admin_password:
+                logger.warning("ADMIN_PASSWORD environment variable not set. Using default 'admin123'. Please change this in production!")
+                admin_password = "admin123"
             admin_user = models.User(
                 username="admin",
-                hashed_password=auth.get_password_hash("admin123"),
+                hashed_password=auth.get_password_hash(admin_password),
                 role="admin",
                 is_active=True
             )
             db.add(admin_user)
             db.commit()
-            logger.info("Default admin user created (username: admin, password: admin123)")
+            logger.info("Default admin user created (username: admin)")
         else:
             logger.info("Admin user already exists, skipping creation.")
     except Exception as e:
