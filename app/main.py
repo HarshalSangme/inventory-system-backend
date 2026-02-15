@@ -180,7 +180,6 @@ class AmplifyCorMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(AmplifyCorMiddleware)
 
-# Auth Endpoints
 @app.post("/token", response_model=schemas.Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
     user = crud.get_user_by_username(db, username=form_data.username)
@@ -206,6 +205,13 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     return crud.create_user(db=db, user=user)
+
+# List all users (admin only)
+@app.get("/users/", response_model=List[schemas.User])
+def list_users(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return db.query(models.User).all()
 
 # Product Endpoints
 @app.get("/products/", response_model=List[schemas.Product])
