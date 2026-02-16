@@ -62,22 +62,13 @@ def number_to_words(num):
     bd = total_fils // 1000
     fils = total_fils % 1000
     
-    if bd == 0:
-        bd_words = "Zero"
-    else:
-        bd_words = convert_int_to_words(bd)
+    bd_words = convert_int_to_words(bd) if bd > 0 else "Zero"
+    fils_words = convert_int_to_words(fils) if fils > 0 else "Zero"
     
-    # Pluralization for Dinar (Singular for 1, Plural for others)
-    dinar_label = "Bahraini Dinar" if bd == 1 else "Bahraini Dinars"
-    
-    result = f"{bd_words} {dinar_label}"
-    
-    if fils > 0:
-        fils_words = convert_int_to_words(fils)
-        # Fils is always plural (singular is Fil, but usually used as Fils)
-        result += f" and {fils_words} Fils"
+    # Format: Baharaini Dinar [WORDS] and Fils [WORDS] only
+    result = f"BAHRAINI DINAR {bd_words} AND FILS {fils_words} ONLY"
         
-    return result + " Only"
+    return result.upper()
 
 def format_date(date_str):
     """Format date string to DD-MM-YYYY"""
@@ -358,7 +349,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             ('GROSS AMT', f'{total_gross:.3f}'),
             ('DISCOUNT', f'{total_discount_all:.3f}' if total_discount_all > 0 else '-'),
             ('VAT AMT', f'{total_vat_all:.3f}' if total_vat_all > 0 else '-'),
-            ('Balance C/f', f'{total_net_all:.3f}'),
+            ('Balance C/f', '-'),
         ]
         
         
@@ -438,8 +429,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         canvas_obj.setFillColor(BLACK)
         canvas_obj.setFont('Helvetica-Bold', 6)
         amount_words = number_to_words(total_net_all)
-        # Convert to upper case for standard invoice format
-        amount_words = amount_words.upper()
+        # The user wants specific casing, number_to_words already returns it
         canvas_obj.drawString(table_x + in_words_label_w + 3, y_pos - in_words_height + 5, amount_words)
     
     # Helper function to draw signature section
