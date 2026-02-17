@@ -1,3 +1,4 @@
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
@@ -6,6 +7,34 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+def get_categories(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.Category).offset(skip).limit(limit).all()
+
+def create_category(db: Session, category: schemas.CategoryCreate):
+    db_category = models.Category(**category.dict())
+    db.add(db_category)
+    db.commit()
+    db.refresh(db_category)
+    return db_category
+
+def update_category(db: Session, category_id: int, category: schemas.CategoryCreate):
+    db_category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not db_category:
+        return None
+    for key, value in category.dict().items():
+        setattr(db_category, key, value)
+    db.add(db_category)
+    db.commit()
+    db.refresh(db_category)
+    return db_category
+
+def delete_category(db: Session, category_id: int):
+    db_category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not db_category:
+        return False
+    db.delete(db_category)
+    db.commit()
+    return True
 def get_password_hash(password):
     # bcrypt only supports passwords up to 72 bytes
     password = password[:72]
@@ -26,8 +55,13 @@ def create_user(db: Session, user: schemas.UserCreate):
     db.refresh(db_user)
     return db_user
 
+
+from sqlalchemy.orm import joinedload
+
 def get_products(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Product).offset(skip).limit(limit).all()
+    return db.query(models.Product).options(
+        joinedload(models.Product.category)
+    ).offset(skip).limit(limit).all()
 
 def create_product(db: Session, product: schemas.ProductCreate):
     db_product = models.Product(**product.dict())

@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 from datetime import timedelta
 from typing import List, Optional
 
@@ -21,23 +23,51 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# Category Endpoints
+@app.get("/categories/", response_model=List[schemas.Category])
+def read_categories(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    return crud.get_categories(db, skip=skip, limit=limit)
 
-def init_database(max_retries=3, retry_delay=2):
-    """Create all database tables with retry logic for Supabase/PostgreSQL."""
-    for attempt in range(1, max_retries + 1):
-        try:
-            logger.info(f"Attempting to create database tables (attempt {attempt}/{max_retries})...")
-            models.Base.metadata.create_all(bind=database.engine)
-            logger.info("Database tables created successfully!")
-            return True
-        except Exception as e:
-            logger.error(f"Table creation attempt {attempt} failed: {e}")
-            if attempt < max_retries:
-                logger.info(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-            else:
-                logger.error("All table creation attempts failed!")
-                raise
+@app.post("/categories/", response_model=schemas.Category)
+def create_category(category: schemas.CategoryCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    return crud.create_category(db=db, category=category)
+
+@app.put("/categories/{category_id}", response_model=schemas.Category)
+def update_category(category_id: int, category: schemas.CategoryCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    db_category = crud.update_category(db=db, category_id=category_id, category=category)
+    if not db_category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return db_category
+
+@app.delete("/categories/{category_id}")
+def delete_category(category_id: int, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    success = crud.delete_category(db=db, category_id=category_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {"detail": "deleted"}
+from datetime import timedelta
+from typing import List, Optional
+
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from . import crud, models, schemas, auth, database
+from .invoice_pdf import generate_invoice_pdf
+import pandas as pd
+import io
+import random
+import logging
+import time
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+# ...existing code...
 
 
 @app.on_event("startup")
@@ -58,6 +88,7 @@ async def startup_event():
         if not admin:
             import os
             admin_password = os.getenv("ADMIN_PASSWORD")
+            logger.info(f"ADMIN_PASSWORD value: '{admin_password}' (length: {len(admin_password) if admin_password else 'None'})")
             if not admin_password:
                 logger.warning("ADMIN_PASSWORD environment variable not set. Using default 'admin123'. Please change this in production!")
                 admin_password = "admin123"
@@ -113,36 +144,41 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
             name = row["DESCRIPTION"]
             if pd.isna(name):
                 continue
-                
+
             cost_price = pd.to_numeric(row["AMT (BHD)"], errors='coerce') or 0
             price = pd.to_numeric(row["Retail Price without VAT"], errors='coerce') or 0
             stock_quantity = pd.to_numeric(row["Order Qty"], errors='coerce') or 0
-            
+
             # Generate SKU
-            # Try to use SR.NO or SR. NO
             sr_no = row.get("SR.NO") or row.get("SR. NO")
-            
             sku = f"SKU-{int(sr_no)}" if sr_no and not pd.isna(sr_no) else f"PROD-{random.randint(1000, 9999)}"
-            
-            # Check SKU existence
+
+            # Upsert logic: update if exists, else insert
             existing_product = db.query(models.Product).filter(models.Product.sku == sku).first()
             if existing_product:
-                 sku = f"{sku}-{random.randint(10, 99)}"
-            
-            product_data = schemas.ProductCreate(
-                name=str(name),
-                sku=str(sku),
-                price=float(price),
-                cost_price=float(cost_price),
-                stock_quantity=int(stock_quantity),
-                min_stock_level=5,
-                description="Imported from Excel"
-            )
-            
-            crud.create_product(db=db, product=product_data)
+                # Update fields
+                existing_product.name = str(name)
+                existing_product.price = float(price)
+                existing_product.cost_price = float(cost_price)
+                existing_product.stock_quantity = int(stock_quantity)
+                existing_product.min_stock_level = 5
+                existing_product.description = "Imported from Excel"
+                db.add(existing_product)
+            else:
+                product_data = schemas.ProductCreate(
+                    name=str(name),
+                    sku=str(sku),
+                    price=float(price),
+                    cost_price=float(cost_price),
+                    stock_quantity=int(stock_quantity),
+                    min_stock_level=5,
+                    description="Imported from Excel"
+                )
+                crud.create_product(db=db, product=product_data)
             imported_count += 1
-            
-        return {"message": f"Successfully imported {imported_count} products"}
+
+        db.commit()
+        return {"message": f"Successfully imported or updated {imported_count} products"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")

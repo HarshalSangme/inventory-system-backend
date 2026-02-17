@@ -18,6 +18,14 @@ class User(Base):
     role = Column(String, default=Role.SALES)
     is_active = Column(Boolean, default=True)
 
+
+class Category(Base):
+    __tablename__ = "categories"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    description = Column(String, nullable=True)
+    products = relationship("Product", back_populates="category")
+
 class Product(Base):
     __tablename__ = "products"
 
@@ -29,7 +37,8 @@ class Product(Base):
     cost_price = Column(Float) # Purchase Price
     stock_quantity = Column(Integer, default=0)
     min_stock_level = Column(Integer, default=5)
-    
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    category = relationship("Category", back_populates="products")
     transaction_items = relationship("TransactionItem", back_populates="product")
 
 class PartnerType(str, enum.Enum):

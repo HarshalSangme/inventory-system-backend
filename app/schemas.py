@@ -23,6 +23,19 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
 
+
+class CategoryBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class CategoryCreate(CategoryBase):
+    pass
+
+class Category(CategoryBase):
+    id: int
+    class Config:
+        from_attributes = True
+
 class ProductBase(BaseModel):
     name: str
     sku: str
@@ -30,13 +43,17 @@ class ProductBase(BaseModel):
     price: float
     cost_price: float
     min_stock_level: int = 5
+    category_id: Optional[int] = None
+
 
 class ProductCreate(ProductBase):
     stock_quantity: int = 0
 
+
 class Product(ProductBase):
     id: int
     stock_quantity: int
+    category: Optional[Category] = None
     class Config:
         from_attributes = True
 
