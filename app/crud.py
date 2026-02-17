@@ -185,12 +185,32 @@ def get_dashboard_stats(db: Session):
     total_products = db.query(models.Product).count()
     total_sales = db.query(func.sum(models.Transaction.total_amount)).filter(models.Transaction.type == models.TransactionType.SALE).scalar() or 0
     low_stock = db.query(models.Product).filter(models.Product.stock_quantity < models.Product.min_stock_level).count()
-    
+
+    # Total stock value (cost)
+    total_stock_value = db.query(func.sum(models.Product.stock_quantity * models.Product.cost_price)).scalar() or 0
+
+    # Total retail value
+    total_retail_value = db.query(func.sum(models.Product.stock_quantity * models.Product.price)).scalar() or 0
+
+    # Top 10 products by current stock
+    top_stock_products_query = db.query(
+        models.Product.name,
+        models.Product.stock_quantity,
+        models.Product.min_stock_level
+    ).order_by(models.Product.stock_quantity.desc()).limit(10).all()
+    top_stock_products = [
+        {
+            "name": name,
+            "stock_quantity": stock_quantity,
+            "min_stock_level": min_stock_level
+        }
+        for name, stock_quantity, min_stock_level in top_stock_products_query
+    ]
+
     # Recent sales
     recent_sales = db.query(models.Transaction).filter(models.Transaction.type == models.TransactionType.SALE).order_by(models.Transaction.date.desc()).limit(5).all()
 
-    # Top selling products (simplified: count of times sold, really should be sum of quantity)
-    # This query sums quantity per product for sales
+    # Top selling products (by quantity sold)
     top_products_query = db.query(models.Product.name, func.sum(models.TransactionItem.quantity).label('total_qty'))\
         .join(models.TransactionItem, models.Product.id == models.TransactionItem.product_id)\
         .join(models.Transaction, models.TransactionItem.transaction_id == models.Transaction.id)\
@@ -198,7 +218,6 @@ def get_dashboard_stats(db: Session):
         .group_by(models.Product.name)\
         .order_by(func.sum(models.TransactionItem.quantity).desc())\
         .limit(5).all()
-    
     top_products = [{"name": name, "value": qty} for name, qty in top_products_query]
 
     # Top customers by revenue
@@ -208,7 +227,6 @@ def get_dashboard_stats(db: Session):
         .group_by(models.Partner.name)\
         .order_by(func.sum(models.Transaction.total_amount).desc())\
         .limit(5).all()
-
     top_customers = [{"name": name, "value": total} for name, total in top_customers_query]
 
     return {
@@ -216,6 +234,9 @@ def get_dashboard_stats(db: Session):
         "total_products": total_products,
         "total_sales": total_sales,
         "low_stock_items": low_stock,
+        "total_stock_value": total_stock_value,
+        "total_retail_value": total_retail_value,
+        "top_stock_products": top_stock_products,
         "recent_sales": recent_sales,
         "top_products": top_products,
         "top_customers": top_customers
