@@ -581,11 +581,14 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         # Center vertically relative to the customer box if possible, or just top-aligned
         banner_y = row_top_y - (customer_box_height / 2) + (title_bar_height / 2) - 5
         
+        # Determine header text based on VAT
+        vat_percent = float(invoice_data.get('vat_percent', 0) or 0)
+        header_text = 'TAX INVOICE' if vat_percent > 0 else 'INVOICE'
         canvas_obj.setFillColor(GRAY_DARK)
         canvas_obj.rect(title_bar_x, banner_y - title_bar_height, title_bar_width, title_bar_height, fill=1, stroke=0)
         canvas_obj.setFillColor(WHITE)
         canvas_obj.setFont('Helvetica-Bold', 11)
-        canvas_obj.drawCentredString(title_bar_x + title_bar_width / 2, banner_y - 14, 'INVOICE')
+        canvas_obj.drawCentredString(title_bar_x + title_bar_width / 2, banner_y - 14, header_text)
         
         canvas_obj.setStrokeColor(BLACK)
         canvas_obj.setLineWidth(1.2)
