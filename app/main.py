@@ -332,9 +332,24 @@ def delete_partner(partner_id: int, db: Session = Depends(database.get_db), curr
     return {"detail": "deleted"}
 
 # Transaction Endpoints
+
 @app.get("/transactions/", response_model=List[schemas.Transaction])
 def read_transactions(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     return crud.get_transactions(db, skip=skip, limit=limit)
+
+@app.put("/transactions/{transaction_id}", response_model=schemas.Transaction)
+def update_transaction(transaction_id: int, transaction: schemas.TransactionCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    db_transaction = crud.update_transaction(db, transaction_id, transaction)
+    if not db_transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return db_transaction
+
+@app.delete("/transactions/{transaction_id}")
+def delete_transaction(transaction_id: int, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    success = crud.delete_transaction(db, transaction_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return {"detail": "deleted"}
 
 @app.post("/transactions/", response_model=schemas.Transaction)
 def create_transaction(transaction: schemas.TransactionCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):

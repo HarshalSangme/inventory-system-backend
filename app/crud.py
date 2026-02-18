@@ -1,3 +1,51 @@
+from sqlalchemy.orm import Session
+from . import schemas, models
+
+def update_transaction(db: Session, transaction_id: int, transaction: schemas.TransactionCreate):
+    db_transaction = db.query(models.Transaction).filter(models.Transaction.id == transaction_id).first()
+    if not db_transaction:
+        return None
+    # Remove old items
+    db.query(models.TransactionItem).filter(models.TransactionItem.transaction_id == transaction_id).delete()
+    db.commit()
+    # Update transaction fields
+    db_transaction.type = transaction.type
+    db_transaction.partner_id = transaction.partner_id
+    db_transaction.vat_percent = transaction.vat_percent
+    db_transaction.sales_person = transaction.sales_person
+    # Recalculate total
+    subtotal = 0
+    for item in transaction.items:
+        item_total = item.price * item.quantity
+        item_discount = getattr(item, 'discount', 0) or 0
+        subtotal += item_total - item_discount
+    vat_percent = transaction.vat_percent or 0
+    total = subtotal + (subtotal * vat_percent / 100)
+    db_transaction.total_amount = total
+    db.commit()
+    # Add new items
+    for item in transaction.items:
+        db_item = models.TransactionItem(
+            transaction_id=transaction_id,
+            product_id=item.product_id,
+            quantity=item.quantity,
+            price=item.price,
+            discount=getattr(item, 'discount', 0) or 0
+        )
+        db.add(db_item)
+    db.commit()
+    db.refresh(db_transaction)
+    return db_transaction
+
+def delete_transaction(db: Session, transaction_id: int):
+    db_transaction = db.query(models.Transaction).filter(models.Transaction.id == transaction_id).first()
+    if not db_transaction:
+        return False
+    # Delete items first
+    db.query(models.TransactionItem).filter(models.TransactionItem.transaction_id == transaction_id).delete()
+    db.delete(db_transaction)
+    db.commit()
+    return True
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
