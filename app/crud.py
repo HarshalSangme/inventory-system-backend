@@ -38,7 +38,7 @@ def delete_category(db: Session, category_id: int):
 def get_password_hash(password):
     # bcrypt only supports passwords up to 72 bytes
     password = password[:72]
-    return pwd_context.hash(password)
+    return pwd_context.hash(password)   
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)

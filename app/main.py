@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from . import crud, models, schemas, auth, database
 from .invoice_pdf import generate_invoice_pdf
+from .database import init_database
 import pandas as pd
 import io
 import random
@@ -57,6 +58,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from . import crud, models, schemas, auth, database
 from .invoice_pdf import generate_invoice_pdf
+from .database import init_database
 import pandas as pd
 import io
 import random
@@ -140,6 +142,7 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
 
         imported_count = 0
         
+
         for index, row in df.iterrows():
             name = row["DESCRIPTION"]
             if pd.isna(name):
@@ -153,28 +156,17 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
             sr_no = row.get("SR.NO") or row.get("SR. NO")
             sku = f"SKU-{int(sr_no)}" if sr_no and not pd.isna(sr_no) else f"PROD-{random.randint(1000, 9999)}"
 
-            # Upsert logic: update if exists, else insert
-            existing_product = db.query(models.Product).filter(models.Product.sku == sku).first()
-            if existing_product:
-                # Update fields
-                existing_product.name = str(name)
-                existing_product.price = float(price)
-                existing_product.cost_price = float(cost_price)
-                existing_product.stock_quantity = int(stock_quantity)
-                existing_product.min_stock_level = 5
-                existing_product.description = "Imported from Excel"
-                db.add(existing_product)
-            else:
-                product_data = schemas.ProductCreate(
-                    name=str(name),
-                    sku=str(sku),
-                    price=float(price),
-                    cost_price=float(cost_price),
-                    stock_quantity=int(stock_quantity),
-                    min_stock_level=5,
-                    description="Imported from Excel"
-                )
-                crud.create_product(db=db, product=product_data)
+            # Always insert new product, even if SKU matches
+            product_data = schemas.ProductCreate(
+                name=str(name),
+                sku=str(sku),
+                price=float(price),
+                cost_price=float(cost_price),
+                stock_quantity=int(stock_quantity),
+                min_stock_level=5,
+                description="Imported from Excel"
+            )
+            crud.create_product(db=db, product=product_data)
             imported_count += 1
 
         db.commit()
