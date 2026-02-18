@@ -154,9 +154,13 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
 
             # Generate SKU
             sr_no = row.get("SR.NO") or row.get("SR. NO")
-            sku = f"SKU-{int(sr_no)}" if sr_no and not pd.isna(sr_no) else f"PROD-{random.randint(1000, 9999)}"
+            base_sku = f"SKU-{int(sr_no)}" if sr_no and not pd.isna(sr_no) else f"PROD-{random.randint(1000, 9999)}"
+            sku = base_sku
+            counter = 1
+            while db.query(models.Product).filter(models.Product.sku == sku).first():
+                sku = f"{base_sku}-{counter}"
+                counter += 1
 
-            # Always insert new product, even if SKU matches
             product_data = schemas.ProductCreate(
                 name=str(name),
                 sku=str(sku),
