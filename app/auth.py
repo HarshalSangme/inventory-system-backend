@@ -1,3 +1,20 @@
+from fastapi import HTTPException, status, Depends
+from functools import wraps
+
+# Decorator for role-based access control
+def require_roles(*roles):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            current_user = kwargs.get('current_user')
+            if not current_user or current_user.role not in roles:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized"
+                )
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt

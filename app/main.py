@@ -247,12 +247,32 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)
         raise HTTPException(status_code=400, detail="Username already registered")
     return crud.create_user(db=db, user=user)
 
+
 # List all users (admin only)
 @app.get("/users/", response_model=List[schemas.User])
 def list_users(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not authorized")
     return db.query(models.User).all()
+
+# Update user details (admin only)
+@app.put("/users/{user_id}", response_model=schemas.User)
+def update_user(user_id: int, user: schemas.UserUpdate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Update only provided fields
+    if user.username is not None:
+        db_user.username = user.username
+    if user.password:
+        db_user.hashed_password = auth.get_password_hash(user.password)
+    if user.role is not None:
+        db_user.role = user.role
+    db.commit()
+    db.refresh(db_user)
+    return db_user
 
 # Product Endpoints
 @app.get("/products/", response_model=List[schemas.Product])

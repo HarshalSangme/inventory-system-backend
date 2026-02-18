@@ -5,6 +5,20 @@ from typing import List
 from . import models, schemas
 from passlib.context import CryptContext
 
+def update_user(db: Session, user_id: int, user: schemas.UserUpdate):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        return None
+    if user.username is not None:
+        db_user.username = user.username
+    if user.password:
+        db_user.hashed_password = get_password_hash(user.password)
+    if user.role is not None:
+        db_user.role = user.role
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def get_categories(db: Session, skip: int = 0, limit: int = 100):

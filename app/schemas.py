@@ -1,7 +1,13 @@
+
 from typing import List, Optional
 from pydantic import BaseModel
 from .models import Role, PartnerType, TransactionType
 from datetime import datetime
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
 
 class UserBase(BaseModel):
     username: str
