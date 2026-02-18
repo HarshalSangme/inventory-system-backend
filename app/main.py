@@ -148,9 +148,13 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
             if pd.isna(name):
                 continue
 
-            cost_price = pd.to_numeric(row["AMT (BHD)"], errors='coerce') or 0
-            price = pd.to_numeric(row["Retail Price without VAT"], errors='coerce') or 0
+            cost_price = pd.to_numeric(row["AMT (BHD)"], errors='coerce')
+            price = pd.to_numeric(row["Retail Price without VAT"], errors='coerce')
             stock_quantity = pd.to_numeric(row["Order Qty"], errors='coerce') or 0
+
+            # Strict validation: cost_price and price must be valid numbers
+            if pd.isna(cost_price) or pd.isna(price):
+                raise HTTPException(status_code=400, detail=f"Invalid or missing cost or retail price at row {index+1}. Please check your Excel file.")
 
             # Generate SKU
             sr_no = row.get("SR.NO") or row.get("SR. NO")
