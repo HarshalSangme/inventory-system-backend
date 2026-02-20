@@ -129,7 +129,16 @@ def get_products(db: Session, skip: int = 0, limit: int = None):
     return query.all()
 
 def create_product(db: Session, product: schemas.ProductCreate):
-    db_product = models.Product(**product.dict())
+    # Ensure SKU is unique
+    sku = product.sku
+    base_sku = sku
+    counter = 1
+    while db.query(models.Product).filter(models.Product.sku == sku).first():
+        sku = f"{base_sku}-{counter}"
+        counter += 1
+    product_dict = product.dict()
+    product_dict["sku"] = sku
+    db_product = models.Product(**product_dict)
     db.add(db_product)
     db.commit()
     db.refresh(db_product)
