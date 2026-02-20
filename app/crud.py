@@ -120,10 +120,13 @@ def create_user(db: Session, user: schemas.UserCreate):
 
 from sqlalchemy.orm import joinedload
 
-def get_products(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Product).options(
+def get_products(db: Session, skip: int = 0, limit: int = None):
+    query = db.query(models.Product).options(
         joinedload(models.Product.category)
-    ).offset(skip).limit(limit).all()
+    ).offset(skip)
+    if limit is not None:
+        query = query.limit(limit)
+    return query.all()
 
 def create_product(db: Session, product: schemas.ProductCreate):
     db_product = models.Product(**product.dict())
