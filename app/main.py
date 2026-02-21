@@ -55,22 +55,17 @@ def delete_category(category_id: int, db: Session = Depends(database.get_db), cu
 
 # --- Email Verification Endpoints ---
 from fastapi import BackgroundTasks
-import smtplib
-from email.mime.text import MIMEText
 import secrets
+from .email_service import EmailService
 
 @app.post("/users/{user_id}/send-verification")
 def send_verification_email(user_id: int, db: Session = Depends(database.get_db), background_tasks: BackgroundTasks = None, current_user: models.User = Depends(auth.get_current_active_user)):
     # Validate SMTP configuration upfront
     try:
-        smtp_host = os.environ["SMTP_HOST"]
-        smtp_port = os.environ["SMTP_PORT"]
-        smtp_user = os.environ["SMTP_USER"]
-        smtp_password = os.environ["SMTP_PASSWORD"]
+        email_svc = EmailService()
     except KeyError as e:
         logger.error(f"Missing SMTP environment variable: {e}")
         raise HTTPException(status_code=500, detail=f"Email service not configured. Missing env var: {e}")
-    verification_base_url = os.getenv("VERIFICATION_BASE_URL", "https://yourdomain.com")
 
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
@@ -85,48 +80,10 @@ def send_verification_email(user_id: int, db: Session = Depends(database.get_db)
     user.email_verification_token_expiry = dt_now.utcnow() + timedelta(hours=24)
     db.commit()
 
-    verification_link = f"{verification_base_url}/verify-email/{token}"
-
-    def send_email():
-        html_body = f"""\
-        <html>
-        <body style="font-family: Arial, sans-serif; color: #333;">
-            <h2>Email Verification</h2>
-            <p>Hello <strong>{user.username}</strong>,</p>
-            <p>Please verify your email address by clicking the button below:</p>
-            <p style="margin: 24px 0;">
-                <a href="{verification_link}"
-                   style="background-color: #4CAF50; color: white; padding: 12px 24px;
-                          text-decoration: none; border-radius: 4px; font-weight: bold;">
-                    Verify Email
-                </a>
-            </p>
-            <p style="font-size: 0.9em; color: #666;">Or copy and paste this link into your browser:<br/>
-               <a href="{verification_link}">{verification_link}</a></p>
-            <p style="font-size: 0.85em; color: #999;">This link expires in 24 hours.</p>
-            <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
-            <p style="font-size: 0.8em; color: #aaa;">Jot Auto Parts W.L.L</p>
-        </body>
-        </html>
-        """
-        msg = MIMEText(html_body, "html")
-        msg["Subject"] = "Verify your email - Jot Auto Parts"
-        msg["From"] = smtp_user
-        msg["To"] = user.email
-        try:
-            with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
-                server.ehlo()
-                server.starttls()
-                server.ehlo()
-                server.login(smtp_user, smtp_password)
-                server.sendmail(smtp_user, user.email, msg.as_string())
-            logger.info(f"Verification email sent to {user.email}")
-        except Exception as e:
-            logger.error(f"Failed to send verification email to {user.email}: {e}")
-            raise  # Re-raise so caller can handle it
     try:
-        send_email()
+        email_svc.send_verification_email(user.username, user.email, token)
     except Exception as e:
+        logger.error(f"Failed to send verification email to {user.email}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to send verification email: {e}")
     return {"detail": "Verification email sent."}
 
