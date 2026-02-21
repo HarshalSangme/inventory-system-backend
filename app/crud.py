@@ -13,6 +13,7 @@ def update_transaction(db: Session, transaction_id: int, transaction: schemas.Tr
     db_transaction.partner_id = transaction.partner_id
     db_transaction.vat_percent = transaction.vat_percent
     db_transaction.sales_person = transaction.sales_person
+    db_transaction.payment_method = transaction.payment_method or "Cash"
     # Recalculate total
     subtotal = 0
     total_discount = 0
@@ -235,7 +236,8 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
         partner_id=transaction.partner_id,
         total_amount=total,
         vat_percent=vat_percent,
-        sales_person=transaction.sales_person
+        sales_person=transaction.sales_person,
+        payment_method=transaction.payment_method or "Cash"
     )
     db.add(db_transaction)
     db.commit()

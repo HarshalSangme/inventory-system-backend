@@ -33,7 +33,10 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # Category Endpoints
 @app.get("/categories/", response_model=List[schemas.Category])
 def read_categories(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    return crud.get_categories(db, skip=skip, limit=limit)
+    categories = crud.get_categories(db, skip=skip, limit=limit)
+    for category in categories:
+        category.name = category.name.upper()
+    return categories
 
 @app.post("/categories/", response_model=schemas.Category)
 def create_category(category: schemas.CategoryCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
@@ -499,6 +502,10 @@ def update_user(user_id: int, user: schemas.UserUpdate, db: Session = Depends(da
 @app.get("/products/", response_model=List[schemas.Product])
 def read_products(skip: int = 0, limit: int = None, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     products = crud.get_products(db, skip=skip, limit=limit)
+    for product in products:
+        product.name = product.name.upper()
+        if product.category:
+            product.category.name = product.category.name.upper()
     return products
 
 @app.post("/products/", response_model=schemas.Product)

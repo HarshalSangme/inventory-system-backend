@@ -99,6 +99,7 @@ class TransactionCreate(BaseModel):
     items: List[TransactionItemBase]
     vat_percent: Optional[float] = 0
     sales_person: Optional[str] = None
+    payment_method: Optional[str] = "Cash"
 
 class TransactionItemOut(TransactionItemBase):
     id: int
@@ -114,6 +115,7 @@ class Transaction(BaseModel):
     total_amount: float
     vat_percent: Optional[float] = 0
     sales_person: Optional[str] = None
+    payment_method: Optional[str] = "Cash"
     partner: Optional[Partner] = None
     items: List[TransactionItemOut] = []
     class Config:

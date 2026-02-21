@@ -77,6 +77,7 @@ class Transaction(Base):
     total_amount = Column(Float, default=0.0)
     vat_percent = Column(Float, default=0.0)
     sales_person = Column(String, nullable=True)
+    payment_method = Column(String, default="Cash")
 
     partner = relationship("Partner", back_populates="transactions")
     items = relationship("TransactionItem", back_populates="transaction")
