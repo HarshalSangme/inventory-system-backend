@@ -12,6 +12,8 @@ class UserUpdate(BaseModel):
 class UserBase(BaseModel):
     username: str
     role: str = Role.SALES
+    email_verified: bool = True
+    admin_approved: bool = True
 
 class UserCreate(UserBase):
     password: str
@@ -19,6 +21,8 @@ class UserCreate(UserBase):
 class User(UserBase):
     id: int
     is_active: bool
+    email_verified: bool = True
+    admin_approved: bool = True
     class Config:
         from_attributes = True
 

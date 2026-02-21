@@ -17,6 +17,8 @@ class User(Base):
     hashed_password = Column(String)
     role = Column(String, default=Role.SALES)
     is_active = Column(Boolean, default=True)
+    email_verified = Column(Boolean, default=True)  # Default True for existing users
+    admin_approved = Column(Boolean, default=True)  # Default True for existing users
 
 
 class Category(Base):

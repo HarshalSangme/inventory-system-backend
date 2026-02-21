@@ -3,7 +3,8 @@ load_dotenv()
 from datetime import timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
+import threading
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -60,6 +61,9 @@ from . import crud, models, schemas, auth, database
 from .invoice_pdf import generate_invoice_pdf
 from .database import init_database
 import pandas as pd
+from sqlalchemy import Column, Integer, String, DateTime, Boolean
+import datetime
+from .models import Base
 import io
 import random
 import logging
@@ -221,30 +225,244 @@ class AmplifyCorMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(AmplifyCorMiddleware)
 
+
+# Log failed login attempts
+class LoginAttemptLog(Base):
+    __tablename__ = "login_attempt_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, index=True)
+    ip_address = Column(String)
+    user_agent = Column(String)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    success = Column(Boolean, default=False)
+    reason = Column(String, nullable=True)
+
 @app.post("/token", response_model=schemas.Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db), request: Request = None):
     user = crud.get_user_by_username(db, username=form_data.username)
+    ip = request.client.host if request and request.client else 'unknown'
+    user_agent = request.headers.get("user-agent", "") if request else ''
     if not user or not auth.verify_password(form_data.password, user.hashed_password):
+        log = LoginAttemptLog(
+            username=form_data.username,
+            ip_address=ip,
+            user_agent=user_agent,
+            success=False,
+            reason="Invalid credentials"
+            
+        )
+        db.add(log)
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Block login if not verified/approved (assumes user model has these fields)
+    if not getattr(user, 'email_verified', True) or not getattr(user, 'admin_approved', True):
+        log = LoginAttemptLog(
+            username=form_data.username,
+            ip_address=ip,
+            user_agent=user_agent,
+            success=False,
+            reason="Not verified or not approved"
+        )
+        db.add(log)
+        db.commit()
+        raise HTTPException(status_code=403, detail="Account not verified or not approved by admin.")
     access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth.create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
+    log = LoginAttemptLog(
+        username=form_data.username,
+        ip_address=ip,
+        user_agent=user_agent,
+        success=True,
+        reason="Login success"
+    )
+    db.add(log)
+    db.commit()
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/users/me", response_model=schemas.User)
 async def read_users_me(current_user: models.User = Depends(auth.get_current_active_user)):
     return current_user
 
+
+# User creation log model (simple inline for now)
+from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from sqlalchemy.ext.declarative import declarative_base
+import datetime
+
+Base = models.Base  # Use existing Base
+
+class UserCreationLog(Base):
+    __tablename__ = "user_creation_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, index=True)
+    ip_address = Column(String)
+    user_agent = Column(String)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    success = Column(Boolean, default=False)
+    reason = Column(String, nullable=True)
+
+user_creation_attempts = {}
+user_creation_lock = threading.Lock()
+
+def check_rate_limit(ip, max_attempts=5, window_seconds=300):
+    import time
+    now = int(time.time())
+    with user_creation_lock:
+        attempts = user_creation_attempts.get(ip, [])
+        # Remove old attempts
+        attempts = [t for t in attempts if now - t < window_seconds]
+        if len(attempts) >= max_attempts:
+            return False
+        attempts.append(now)
+        user_creation_attempts[ip] = attempts
+    return True
+
+def verify_captcha(captcha_response: str) -> bool:
+    # Stub: Integrate with real CAPTCHA provider (e.g., Google reCAPTCHA)
+    # For now, always require 'letmein' as the correct answer for testing
+    return captcha_response == 'letmein'
+
 @app.post("/users/", response_model=schemas.User)
-def create_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
+def create_user(user: schemas.UserCreate, request: Request, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    ip = request.client.host if request.client else 'unknown'
+    # Rate limiting
+    if not check_rate_limit(ip):
+        log = UserCreationLog(
+            username=user.username,
+            ip_address=ip,
+            user_agent=request.headers.get("user-agent", ""),
+            success=False,
+            reason="Rate limit exceeded"
+        )
+        db.add(log)
+        db.commit()
+        raise HTTPException(status_code=429, detail="Too many attempts. Please try again later.")
+
+    # CAPTCHA check (expecting user.captcha field)
+    captcha_response = getattr(user, 'captcha', None)
+    if not captcha_response or not verify_captcha(captcha_response):
+        log = UserCreationLog(
+            username=user.username,
+            ip_address=ip,
+            user_agent=request.headers.get("user-agent", ""),
+            success=False,
+            reason="CAPTCHA failed"
+        )
+        db.add(log)
+        db.commit()
+        raise HTTPException(status_code=400, detail="CAPTCHA verification failed.")
+
+    # Only admin can create users
+    if not current_user or current_user.role != "admin":
+        # Log attempt
+        log = UserCreationLog(
+            username=user.username,
+            ip_address=ip,
+            user_agent=request.headers.get("user-agent", ""),
+            success=False,
+            reason="Not authorized"
+        )
+        db.add(log)
+        db.commit()
+        raise HTTPException(status_code=403, detail="Only admin can create users")
+
+    # Password policy: min 8 chars, at least 1 digit, 1 uppercase, 1 lowercase
+    import re
+    password = user.password if hasattr(user, 'password') else None
+    if not password or len(password) < 8 or not re.search(r"[A-Z]", password) or not re.search(r"[a-z]", password) or not re.search(r"\d", password):
+        log = UserCreationLog(
+            username=user.username,
+            ip_address=ip,
+            user_agent=request.headers.get("user-agent", ""),
+            success=False,
+            reason="Password policy not met"
+        )
+        db.add(log)
+        db.commit()
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters, include uppercase, lowercase, and a digit.")
+
     db_user = crud.get_user_by_username(db, username=user.username)
     if db_user:
+        log = UserCreationLog(
+            username=user.username,
+            ip_address=ip,
+            user_agent=request.headers.get("user-agent", ""),
+            success=False,
+            reason="Username already registered"
+        )
+        db.add(log)
+        db.commit()
         raise HTTPException(status_code=400, detail="Username already registered")
+
+    # Log successful creation
+    log = UserCreationLog(
+        username=user.username,
+        ip_address=ip,
+        user_agent=request.headers.get("user-agent", ""),
+        success=True,
+        reason="Created"
+    )
+    db.add(log)
+    db.commit()
+    return crud.create_user(db=db, user=user)
+    # Only admin can create users
+    if not current_user or current_user.role != "admin":
+        # Log attempt
+        log = UserCreationLog(
+            username=user.username,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", ""),
+            success=False,
+            reason="Not authorized"
+        )
+        db.add(log)
+        db.commit()
+        raise HTTPException(status_code=403, detail="Only admin can create users")
+
+    # Password policy: min 8 chars, at least 1 digit, 1 uppercase, 1 lowercase
+    import re
+    password = user.password if hasattr(user, 'password') else None
+    if not password or len(password) < 8 or not re.search(r"[A-Z]", password) or not re.search(r"[a-z]", password) or not re.search(r"\d", password):
+        log = UserCreationLog(
+            username=user.username,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", ""),
+            success=False,
+            reason="Password policy not met"
+        )
+        db.add(log)
+        db.commit()
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters, include uppercase, lowercase, and a digit.")
+
+    db_user = crud.get_user_by_username(db, username=user.username)
+    if db_user:
+        log = UserCreationLog(
+            username=user.username,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", ""),
+            success=False,
+            reason="Username already registered"
+        )
+        db.add(log)
+        db.commit()
+        raise HTTPException(status_code=400, detail="Username already registered")
+
+    # Log successful creation
+    log = UserCreationLog(
+        username=user.username,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", ""),
+        success=True,
+        reason="Created"
+    )
+    db.add(log)
+    db.commit()
     return crud.create_user(db=db, user=user)
 
 
