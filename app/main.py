@@ -344,19 +344,19 @@ def create_user(user: schemas.UserCreate, request: Request, db: Session = Depend
         db.commit()
         raise HTTPException(status_code=429, detail="Too many attempts. Please try again later.")
 
-    # CAPTCHA check (expecting user.captcha field)
-    captcha_response = getattr(user, 'captcha', None)
-    if not captcha_response or not verify_captcha(captcha_response):
-        log = UserCreationLog(
-            username=user.username,
-            ip_address=ip,
-            user_agent=request.headers.get("user-agent", ""),
-            success=False,
-            reason="CAPTCHA failed"
-        )
-        db.add(log)
-        db.commit()
-        raise HTTPException(status_code=400, detail="CAPTCHA verification failed.")
+    # CAPTCHA check disabled for now
+    # captcha_response = getattr(user, 'captcha', None)
+    # if not captcha_response or not verify_captcha(captcha_response):
+    #     log = UserCreationLog(
+    #         username=user.username,
+    #         ip_address=ip,
+    #         user_agent=request.headers.get("user-agent", ""),
+    #         success=False,
+    #         reason="CAPTCHA failed"
+    #     )
+    #     db.add(log)
+    #     db.commit()
+    #     raise HTTPException(status_code=400, detail="CAPTCHA verification failed.")
 
     # Only admin can create users
     if not current_user or current_user.role != "admin":
