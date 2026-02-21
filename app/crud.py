@@ -11,24 +11,28 @@ def update_transaction(db: Session, transaction_id: int, transaction: schemas.Tr
     # Update transaction fields
     db_transaction.type = transaction.type
     db_transaction.partner_id = transaction.partner_id
-    db_transaction.vat_percent = transaction.vat_percent
+    # Remove global VAT
     db_transaction.sales_person = transaction.sales_person
     db_transaction.payment_method = transaction.payment_method or "Cash"
     # Recalculate total
     subtotal = 0
     total_discount = 0
+    total_vat = 0
     for item in transaction.items:
         item_total = item.price * item.quantity
         item_discount = getattr(item, 'discount', 0) or 0
-        subtotal += item_total - item_discount
+        item_vat_percent = getattr(item, 'vat_percent', 0) or 0
+        item_amt_after_disc = item_total - item_discount
+        item_vat = item_amt_after_disc * (item_vat_percent / 100)
+        subtotal += item_amt_after_disc
         total_discount += item_discount
+        total_vat += item_vat
         # Selling price validation for sales
         if transaction.type == models.TransactionType.SALE.value:
             product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
             if product and item.price < product.cost_price:
                 raise ValueError(f"Selling price ({item.price}) cannot be less than cost price ({product.cost_price}) for product '{product.name}'.")
-    vat_percent = transaction.vat_percent or 0
-    total = subtotal + (subtotal * vat_percent / 100)
+    total = subtotal + total_vat
     db_transaction.total_amount = total
     db.commit()
     # Add new items
@@ -38,7 +42,8 @@ def update_transaction(db: Session, transaction_id: int, transaction: schemas.Tr
             product_id=item.product_id,
             quantity=item.quantity,
             price=item.price,
-            discount=getattr(item, 'discount', 0) or 0
+            discount=getattr(item, 'discount', 0) or 0,
+            vat_percent=getattr(item, 'vat_percent', 0) or 0
         )
         db.add(db_item)
     db.commit()
@@ -210,32 +215,45 @@ def delete_partner(db: Session, partner_id: int):
     return True
 
 def get_transactions(db: Session, skip: int = 0, limit: int = 100):
-    # Eager load items and partner
-    return db.query(models.Transaction).offset(skip).limit(limit).all()
+    # Eager load items, partner, and product details
+    from sqlalchemy.orm import joinedload
+    return (
+        db.query(models.Transaction)
+        .options(
+            joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
+            joinedload(models.Transaction.partner)
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
 def create_transaction(db: Session, transaction: schemas.TransactionCreate):
 
     # Calculate Subtotal (price × qty - discount per item)
     subtotal = 0
     total_discount = 0
+    total_vat = 0
     for item in transaction.items:
         item_total = item.price * item.quantity
         item_discount = getattr(item, 'discount', 0) or 0
-        subtotal += item_total - item_discount
+        item_vat_percent = getattr(item, 'vat_percent', 0) or 0
+        item_amt_after_disc = item_total - item_discount
+        item_vat = item_amt_after_disc * (item_vat_percent / 100)
+        subtotal += item_amt_after_disc
         total_discount += item_discount
+        total_vat += item_vat
         # Selling price validation for sales
         if transaction.type == models.TransactionType.SALE.value:
             product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
             if product and item.price < product.cost_price:
                 raise ValueError(f"Selling price ({item.price}) cannot be less than cost price ({product.cost_price}) for product '{product.name}'.")
-    vat_percent = getattr(transaction, 'vat_percent', 0) or 0
-    total = subtotal + (subtotal * vat_percent / 100)
+    total = subtotal + total_vat
 
     db_transaction = models.Transaction(
         type=transaction.type,
         partner_id=transaction.partner_id,
         total_amount=total,
-        vat_percent=vat_percent,
         sales_person=transaction.sales_person,
         payment_method=transaction.payment_method or "Cash"
     )
@@ -249,7 +267,8 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
             product_id=item.product_id,
             quantity=item.quantity,
             price=item.price,
-            discount=getattr(item, 'discount', 0) or 0
+            discount=getattr(item, 'discount', 0) or 0,
+            vat_percent=getattr(item, 'vat_percent', 0) or 0
         )
         db.add(db_item)
         

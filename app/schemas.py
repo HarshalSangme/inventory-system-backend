@@ -92,12 +92,12 @@ class TransactionItemBase(BaseModel):
     quantity: int
     price: float
     discount: float = 0  # Per-item discount amount
+    vat_percent: float = 0  # Per-item VAT percent
 
 class TransactionCreate(BaseModel):
     partner_id: int
     type: str # TransactionType
     items: List[TransactionItemBase]
-    vat_percent: Optional[float] = 0
     sales_person: Optional[str] = None
     payment_method: Optional[str] = "Cash"
 
@@ -113,7 +113,6 @@ class Transaction(BaseModel):
     type: str
     partner_id: int
     total_amount: float
-    vat_percent: Optional[float] = 0
     sales_person: Optional[str] = None
     payment_method: Optional[str] = "Cash"
     partner: Optional[Partner] = None
