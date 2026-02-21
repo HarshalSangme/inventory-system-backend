@@ -6,11 +6,13 @@ from datetime import datetime
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
+    email: Optional[str] = None
     password: Optional[str] = None
     role: Optional[str] = None
 
 class UserBase(BaseModel):
     username: str
+    email: Optional[str] = None
     role: str = Role.SALES
     email_verified: bool = True
     admin_approved: bool = True
@@ -21,8 +23,11 @@ class UserCreate(UserBase):
 class User(UserBase):
     id: int
     is_active: bool
+    email: Optional[str] = None
     email_verified: bool = True
     admin_approved: bool = True
+    email_verification_token: Optional[str] = None
+    email_verification_token_expiry: Optional[datetime] = None
     class Config:
         from_attributes = True
 

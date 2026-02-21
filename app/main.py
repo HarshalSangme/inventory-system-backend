@@ -1,3 +1,4 @@
+
 from dotenv import load_dotenv
 load_dotenv()
 from datetime import timedelta
@@ -19,6 +20,9 @@ import io
 import random
 import logging
 import time
+import datetime
+from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from .models import Base
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,33 +51,56 @@ def delete_category(category_id: int, db: Session = Depends(database.get_db), cu
     if not success:
         raise HTTPException(status_code=404, detail="Category not found")
     return {"detail": "deleted"}
-from datetime import timedelta
-from typing import List, Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
-from fastapi.security import OAuth2PasswordRequestForm
-from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import joinedload
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from . import crud, models, schemas, auth, database
-from .invoice_pdf import generate_invoice_pdf
-from .database import init_database
-import pandas as pd
-from sqlalchemy import Column, Integer, String, DateTime, Boolean
-import datetime
-from .models import Base
-import io
-import random
-import logging
-import time
+# --- Email Verification Endpoints ---
+from fastapi import BackgroundTasks
+import smtplib
+from email.mime.text import MIMEText
+import secrets
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+@app.post("/users/{user_id}/send-verification")
+def send_verification_email(user_id: int, db: Session = Depends(database.get_db), background_tasks: BackgroundTasks = None, current_user: models.User = Depends(auth.get_current_active_user)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.email:
+        raise HTTPException(status_code=400, detail="User has no email address")
+    if user.email_verified:
+        raise HTTPException(status_code=400, detail="User already verified")
+    from datetime import datetime as dt_now, timedelta
+    token = secrets.token_urlsafe(32)
+    user.email_verification_token = token
+    user.email_verification_token_expiry = dt_now.utcnow() + timedelta(hours=24)
+    db.commit()
+    def send_email():
+        msg = MIMEText(f"Hello {user.username},\n\nPlease verify your email by clicking the link below:\n\nhttps://yourdomain.com/verify-email/{token}\n\nThank you.")
+        msg['Subject'] = 'Verify your email'
+        msg['From'] = 'noreply@yourdomain.com'
+        msg['To'] = user.email
+        try:
+            pass  # Stub: no actual email sent
+        except Exception as e:
+            logger.error(f"Failed to send verification email: {e}")
+    if background_tasks:
+        background_tasks.add_task(send_email)
+    else:
+        send_email()
+    return {"detail": "Verification email sent (stub)."}
 
+@app.get("/verify-email/{token}")
+def verify_email(token: str, db: Session = Depends(database.get_db)):
+    user = db.query(models.User).filter(models.User.email_verification_token == token).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Invalid or expired token")
+    from datetime import datetime as dt_now
+    if not user.email_verification_token_expiry or user.email_verification_token_expiry < dt_now.utcnow():
+        raise HTTPException(status_code=400, detail="Token expired")
+    user.email_verified = True
+    user.email_verification_token = None
+    user.email_verification_token_expiry = None
+    db.commit()
+    return {"detail": "Email verified successfully."}
 
-# ...existing code...
 
 
 @app.on_event("startup")
@@ -84,8 +111,28 @@ async def startup_event():
     except Exception as e:
         logger.error(f"CRITICAL: Could not create database tables: {e}")
         logger.error("The application may not work correctly without database tables.")
-        # Don't return here - let it continue so the app can at least start
-        # and show meaningful errors on API calls
+
+    # Step 1.5: Migrate — add missing columns to existing tables
+    from sqlalchemy import inspect, text
+    try:
+        insp = inspect(database.engine)
+        if insp.has_table("users"):
+            existing_cols = {c['name'] for c in insp.get_columns('users')}
+            migrations = [
+                ('email', 'VARCHAR'),
+                ('email_verified', 'BOOLEAN DEFAULT TRUE'),
+                ('admin_approved', 'BOOLEAN DEFAULT TRUE'),
+                ('email_verification_token', 'VARCHAR'),
+                ('email_verification_token_expiry', 'TIMESTAMP'),
+            ]
+            with database.engine.connect() as conn:
+                for col_name, col_type in migrations:
+                    if col_name not in existing_cols:
+                        conn.execute(text(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}'))
+                        conn.commit()
+                        logger.info(f"Migration: Added column '{col_name}' to users table")
+    except Exception as e:
+        logger.error(f"Migration error: {e}")
 
     # Step 2: Create default admin user
     db = next(database.get_db())
@@ -169,6 +216,8 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
                 sku = f"{base_sku}-{counter}"
                 counter += 1
 
+            if price < cost_price:
+                raise HTTPException(status_code=400, detail=f"Selling price cannot be less than cost price at row {index+1}.")
             product_data = schemas.ProductCreate(
                 name=str(name),
                 sku=str(sku),
@@ -411,59 +460,7 @@ def create_user(user: schemas.UserCreate, request: Request, db: Session = Depend
     db.add(log)
     db.commit()
     return crud.create_user(db=db, user=user)
-    # Only admin can create users
-    if not current_user or current_user.role != "admin":
-        # Log attempt
-        log = UserCreationLog(
-            username=user.username,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent", ""),
-            success=False,
-            reason="Not authorized"
-        )
-        db.add(log)
-        db.commit()
-        raise HTTPException(status_code=403, detail="Only admin can create users")
 
-    # Password policy: min 8 chars, at least 1 digit, 1 uppercase, 1 lowercase
-    import re
-    password = user.password if hasattr(user, 'password') else None
-    if not password or len(password) < 8 or not re.search(r"[A-Z]", password) or not re.search(r"[a-z]", password) or not re.search(r"\d", password):
-        log = UserCreationLog(
-            username=user.username,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent", ""),
-            success=False,
-            reason="Password policy not met"
-        )
-        db.add(log)
-        db.commit()
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters, include uppercase, lowercase, and a digit.")
-
-    db_user = crud.get_user_by_username(db, username=user.username)
-    if db_user:
-        log = UserCreationLog(
-            username=user.username,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent", ""),
-            success=False,
-            reason="Username already registered"
-        )
-        db.add(log)
-        db.commit()
-        raise HTTPException(status_code=400, detail="Username already registered")
-
-    # Log successful creation
-    log = UserCreationLog(
-        username=user.username,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent", ""),
-        success=True,
-        reason="Created"
-    )
-    db.add(log)
-    db.commit()
-    return crud.create_user(db=db, user=user)
 
 
 # List all users (admin only)
@@ -484,6 +481,12 @@ def update_user(user_id: int, user: schemas.UserUpdate, db: Session = Depends(da
     # Update only provided fields
     if user.username is not None:
         db_user.username = user.username
+    if user.email is not None and user.email != db_user.email:
+        db_user.email = user.email
+        # Reset verification when email changes
+        db_user.email_verified = False
+        db_user.email_verification_token = None
+        db_user.email_verification_token_expiry = None
     if user.password:
         db_user.hashed_password = auth.get_password_hash(user.password)
     if user.role is not None:
@@ -500,10 +503,14 @@ def read_products(skip: int = 0, limit: int = None, db: Session = Depends(databa
 
 @app.post("/products/", response_model=schemas.Product)
 def create_product(product: schemas.ProductCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    if product.price < product.cost_price:
+        raise HTTPException(status_code=400, detail="Selling price cannot be less than cost price.")
     return crud.create_product(db=db, product=product)
 
 @app.put("/products/{product_id}", response_model=schemas.Product)
 def update_product(product_id: int, product: schemas.ProductCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    if product.price < product.cost_price:
+        raise HTTPException(status_code=400, detail="Selling price cannot be less than cost price.")
     db_product = crud.update_product(db=db, product_id=product_id, product=product)
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")

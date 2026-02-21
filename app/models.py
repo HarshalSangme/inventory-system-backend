@@ -14,11 +14,14 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    email = Column(String, nullable=True)
     hashed_password = Column(String)
     role = Column(String, default=Role.SALES)
     is_active = Column(Boolean, default=True)
     email_verified = Column(Boolean, default=True)  # Default True for existing users
     admin_approved = Column(Boolean, default=True)  # Default True for existing users
+    email_verification_token = Column(String, nullable=True)
+    email_verification_token_expiry = Column(DateTime, nullable=True)
 
 
 class Category(Base):

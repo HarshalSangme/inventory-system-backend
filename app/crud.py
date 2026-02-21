@@ -15,10 +15,17 @@ def update_transaction(db: Session, transaction_id: int, transaction: schemas.Tr
     db_transaction.sales_person = transaction.sales_person
     # Recalculate total
     subtotal = 0
+    total_discount = 0
     for item in transaction.items:
         item_total = item.price * item.quantity
         item_discount = getattr(item, 'discount', 0) or 0
         subtotal += item_total - item_discount
+        total_discount += item_discount
+        # Selling price validation for sales
+        if transaction.type == models.TransactionType.SALE.value:
+            product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+            if product and item.price < product.cost_price:
+                raise ValueError(f"Selling price ({item.price}) cannot be less than cost price ({product.cost_price}) for product '{product.name}'.")
     vat_percent = transaction.vat_percent or 0
     total = subtotal + (subtotal * vat_percent / 100)
     db_transaction.total_amount = total
@@ -215,6 +222,11 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
         item_discount = getattr(item, 'discount', 0) or 0
         subtotal += item_total - item_discount
         total_discount += item_discount
+        # Selling price validation for sales
+        if transaction.type == models.TransactionType.SALE.value:
+            product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+            if product and item.price < product.cost_price:
+                raise ValueError(f"Selling price ({item.price}) cannot be less than cost price ({product.cost_price}) for product '{product.name}'.")
     vat_percent = getattr(transaction, 'vat_percent', 0) or 0
     total = subtotal + (subtotal * vat_percent / 100)
 
@@ -285,22 +297,28 @@ def get_dashboard_stats(db: Session):
     recent_sales = db.query(models.Transaction).filter(models.Transaction.type == models.TransactionType.SALE).order_by(models.Transaction.date.desc()).limit(5).all()
 
     # Top selling products (by quantity sold)
-    top_products_query = db.query(models.Product.name, func.sum(models.TransactionItem.quantity).label('total_qty'))\
-        .join(models.TransactionItem, models.Product.id == models.TransactionItem.product_id)\
-        .join(models.Transaction, models.TransactionItem.transaction_id == models.Transaction.id)\
-        .filter(models.Transaction.type == models.TransactionType.SALE)\
-        .group_by(models.Product.name)\
-        .order_by(func.sum(models.TransactionItem.quantity).desc())\
-        .limit(5).all()
+    top_products_query = (
+        db.query(models.Product.name, func.sum(models.TransactionItem.quantity).label('total_qty'))
+        .join(models.TransactionItem, models.Product.id == models.TransactionItem.product_id)
+        .join(models.Transaction, models.TransactionItem.transaction_id == models.Transaction.id)
+        .filter(models.Transaction.type == models.TransactionType.SALE)
+        .group_by(models.Product.name)
+        .order_by(func.sum(models.TransactionItem.quantity).desc())
+        .limit(5)
+        .all()
+    )
     top_products = [{"name": name, "value": qty} for name, qty in top_products_query]
 
     # Top customers by revenue
-    top_customers_query = db.query(models.Partner.name, func.sum(models.Transaction.total_amount).label('total_spent'))\
-        .join(models.Transaction, models.Partner.id == models.Transaction.partner_id)\
-        .filter(models.Transaction.type == models.TransactionType.SALE)\
-        .group_by(models.Partner.name)\
-        .order_by(func.sum(models.Transaction.total_amount).desc())\
-        .limit(5).all()
+    top_customers_query = (
+        db.query(models.Partner.name, func.sum(models.Transaction.total_amount).label('total_spent'))
+        .join(models.Transaction, models.Partner.id == models.Transaction.partner_id)
+        .filter(models.Transaction.type == models.TransactionType.SALE)
+        .group_by(models.Partner.name)
+        .order_by(func.sum(models.Transaction.total_amount).desc())
+        .limit(5)
+        .all()
+    )
     top_customers = [{"name": name, "value": total} for name, total in top_customers_query]
 
     return {
