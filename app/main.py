@@ -565,9 +565,34 @@ def delete_partner(partner_id: int, db: Session = Depends(database.get_db), curr
 
 # Transaction Endpoints
 
+from fastapi import Query
+from datetime import datetime
+
 @app.get("/transactions/", response_model=List[schemas.Transaction])
-def read_transactions(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    return crud.get_transactions(db, skip=skip, limit=limit)
+def read_transactions(
+    skip: int = 0,
+    limit: int = 100,
+    from_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
+    to_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    query = db.query(models.Transaction)
+    if from_date:
+        try:
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d")
+            query = query.filter(models.Transaction.date >= from_dt)
+        except Exception:
+            pass
+    if to_date:
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d")
+            # Add 1 day to include the end date fully
+            to_dt = to_dt.replace(hour=23, minute=59, second=59)
+            query = query.filter(models.Transaction.date <= to_dt)
+        except Exception:
+            pass
+    return crud.get_transactions(db, skip=skip, limit=limit, base_query=query)
 
 @app.put("/transactions/{transaction_id}", response_model=schemas.Transaction)
 def update_transaction(transaction_id: int, transaction: schemas.TransactionCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):

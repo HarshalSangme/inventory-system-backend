@@ -214,19 +214,16 @@ def delete_partner(db: Session, partner_id: int):
     db.commit()
     return True
 
-def get_transactions(db: Session, skip: int = 0, limit: int = 100):
+def get_transactions(db: Session, skip: int = 0, limit: int = 100, base_query=None):
     # Eager load items, partner, and product details
     from sqlalchemy.orm import joinedload
-    return (
-        db.query(models.Transaction)
-        .options(
-            joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
-            joinedload(models.Transaction.partner)
-        )
-        .offset(skip)
-        .limit(limit)
-        .all()
+    query = base_query if base_query is not None else db.query(models.Transaction)
+    query = query.options(
+        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
+        joinedload(models.Transaction.partner)
     )
+    query = query.offset(skip).limit(limit)
+    return query.all()
 
 def create_transaction(db: Session, transaction: schemas.TransactionCreate):
 
