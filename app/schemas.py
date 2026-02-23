@@ -93,6 +93,7 @@ class TransactionItemBase(BaseModel):
     price: float
     discount: float = 0  # Per-item discount amount
     vat_percent: float = 0  # Per-item VAT percent
+    sku: Optional[str] = None  # User-typed SKU (optional)
 
 class TransactionCreate(BaseModel):
     partner_id: int
