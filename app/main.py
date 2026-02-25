@@ -592,6 +592,7 @@ def read_transactions(
             query = query.filter(models.Transaction.date <= to_dt)
         except Exception:
             pass
+    # Ensure product details are included for each transaction item
     return crud.get_transactions(db, skip=skip, limit=limit, base_query=query)
 
 @app.put("/transactions/{transaction_id}", response_model=schemas.Transaction)

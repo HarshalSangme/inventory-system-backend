@@ -218,12 +218,17 @@ def get_transactions(db: Session, skip: int = 0, limit: int = 100, base_query=No
     # Eager load items, partner, and product details
     from sqlalchemy.orm import joinedload
     query = base_query if base_query is not None else db.query(models.Transaction)
+    # Eager load items and their products, and partner
     query = query.options(
         joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
         joinedload(models.Transaction.partner)
     )
-    query = query.offset(skip).limit(limit)
-    return query.all()
+    transactions = query.offset(skip).limit(limit).all()
+    # Force loading of product for each item (workaround for lazy loading issues)
+    for tx in transactions:
+        for item in tx.items:
+            _ = item.product  # Access to force load
+    return transactions
 
 def create_transaction(db: Session, transaction: schemas.TransactionCreate):
 
