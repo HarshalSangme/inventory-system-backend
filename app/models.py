@@ -29,6 +29,7 @@ class Category(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
     description = Column(String, nullable=True)
+    margin_percent = Column(Float, default=40.0)  # Default margin percent for recommended selling price
     products = relationship("Product", back_populates="category")
 
 class Product(Base):

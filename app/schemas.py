@@ -42,12 +42,14 @@ class TokenData(BaseModel):
 class CategoryBase(BaseModel):
     name: str
     description: Optional[str] = None
+    margin_percent: Optional[float] = 40.0
 
 class CategoryCreate(CategoryBase):
     pass
 
 class Category(CategoryBase):
     id: int
+    margin_percent: float
     class Config:
         from_attributes = True
 

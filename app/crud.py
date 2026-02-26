@@ -28,10 +28,7 @@ def update_transaction(db: Session, transaction_id: int, transaction: schemas.Tr
         total_discount += item_discount
         total_vat += item_vat
         # Selling price validation for sales
-        if transaction.type == models.TransactionType.SALE.value:
-            product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
-            if product and item.price < product.cost_price:
-                raise ValueError(f"Selling price ({item.price}) cannot be less than cost price ({product.cost_price}) for product '{product.name}'.")
+        # Old selling price logic removed
     total = subtotal + total_vat
     db_transaction.total_amount = total
     db.commit()
@@ -246,10 +243,7 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
         total_discount += item_discount
         total_vat += item_vat
         # Selling price validation for sales
-        if transaction.type == models.TransactionType.SALE.value:
-            product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
-            if product and item.price < product.cost_price:
-                raise ValueError(f"Selling price ({item.price}) cannot be less than cost price ({product.cost_price}) for product '{product.name}'.")
+        # Old selling price logic removed
     total = subtotal + total_vat
 
     db_transaction = models.Transaction(

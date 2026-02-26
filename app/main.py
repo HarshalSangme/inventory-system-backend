@@ -219,8 +219,7 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
                 sku = f"{base_sku}-{counter}"
                 counter += 1
 
-            if price < cost_price:
-                raise HTTPException(status_code=400, detail=f"Selling price cannot be less than cost price at row {index+1}.")
+            # Old selling price logic removed
             product_data = schemas.ProductCreate(
                 name=str(name),
                 sku=str(sku),
@@ -510,14 +509,12 @@ def read_products(skip: int = 0, limit: int = None, db: Session = Depends(databa
 
 @app.post("/products/", response_model=schemas.Product)
 def create_product(product: schemas.ProductCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    if product.price < product.cost_price:
-        raise HTTPException(status_code=400, detail="Selling price cannot be less than cost price.")
+    # Old selling price logic removed
     return crud.create_product(db=db, product=product)
 
 @app.put("/products/{product_id}", response_model=schemas.Product)
 def update_product(product_id: int, product: schemas.ProductCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    if product.price < product.cost_price:
-        raise HTTPException(status_code=400, detail="Selling price cannot be less than cost price.")
+    # Old selling price logic removed
     db_product = crud.update_product(db=db, product_id=product_id, product=product)
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
