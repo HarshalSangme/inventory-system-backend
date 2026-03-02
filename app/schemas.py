@@ -61,6 +61,7 @@ class ProductBase(BaseModel):
     cost_price: float
     min_stock_level: int = 5
     category_id: Optional[int] = None
+    image_url: Optional[str] = None
 
 
 class ProductCreate(ProductBase):

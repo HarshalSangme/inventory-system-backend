@@ -44,6 +44,7 @@ class Product(Base):
     stock_quantity = Column(Integer, default=0)
     min_stock_level = Column(Integer, default=5)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    image_url = Column(String, nullable=True)
     category = relationship("Category", back_populates="products")
     transaction_items = relationship("TransactionItem", back_populates="product")
 

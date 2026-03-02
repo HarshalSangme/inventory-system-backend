@@ -8,6 +8,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, R
 import threading
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +19,9 @@ from .database import init_database
 import pandas as pd
 import io
 import os
+import uuid
 import random
+from pathlib import Path
 import logging
 import time
 import datetime
@@ -135,7 +138,41 @@ async def startup_event():
                         conn.commit()
                         logger.info(f"Migration: Added column '{col_name}' to users table")
     except Exception as e:
-        logger.error(f"Migration error: {e}")
+        logger.error(f"Migration error (users): {e}")
+
+    # Step 1.6: Migrate — add missing columns to products table
+    try:
+        insp = inspect(database.engine)
+        if insp.has_table("products"):
+            existing_cols = {c['name'] for c in insp.get_columns('products')}
+            product_migrations = [
+                ('image_url', 'VARCHAR'),
+            ]
+            with database.engine.connect() as conn:
+                for col_name, col_type in product_migrations:
+                    if col_name not in existing_cols:
+                        conn.execute(text(f'ALTER TABLE products ADD COLUMN {col_name} {col_type}'))
+                        conn.commit()
+                        logger.info(f"Migration: Added column '{col_name}' to products table")
+    except Exception as e:
+        logger.error(f"Migration error (products): {e}")
+
+    # Step 1.7: Migrate — add missing columns to categories table
+    try:
+        insp = inspect(database.engine)
+        if insp.has_table("categories"):
+            existing_cols = {c['name'] for c in insp.get_columns('categories')}
+            category_migrations = [
+                ('margin_percent', 'FLOAT DEFAULT 40.0')
+            ]
+            with database.engine.connect() as conn:
+                for col_name, col_type in category_migrations:
+                    if col_name not in existing_cols:
+                        conn.execute(text(f'ALTER TABLE categories ADD COLUMN {col_name} {col_type}'))
+                        conn.commit()
+                        logger.info(f"Migration: Added column '{col_name}' to categories table")
+    except Exception as e:
+        logger.error(f"Migration error (categories): {e}")
 
     # Step 2: Create default admin user
     db = next(database.get_db())
@@ -237,6 +274,91 @@ async def import_products(file: UploadFile = File(...), db: Session = Depends(da
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+
+# --- Product Image Upload (Local or S3) ---
+PRODUCT_IMAGES_DIR = Path("static/product-images")
+PRODUCT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+# S3 config (production)
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+S3_REGION = os.getenv("S3_REGION", "us-east-1")
+
+def _get_s3_client():
+    import boto3
+    return boto3.client(
+        "s3",
+        region_name=S3_REGION,
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    )
+
+@app.post("/upload-product-image/")
+async def upload_product_image(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    # Validate file type
+    allowed_types = ["image/jpeg", "image/png", "image/webp"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Invalid file type. Only JPEG, PNG, and WebP are allowed.")
+    
+    # Read and validate file size (max 5MB)
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 5MB.")
+    
+    # Generate unique filename
+    ext = file.filename.rsplit(".", 1)[-1] if "." in file.filename else "jpg"
+    filename = f"{uuid.uuid4().hex}.{ext}"
+
+    if S3_BUCKET_NAME:
+        # Production: Upload to S3
+        try:
+            s3 = _get_s3_client()
+            s3.put_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=f"product-images/{filename}",
+                Body=contents,
+                ContentType=file.content_type,
+            )
+            image_url = f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/product-images/{filename}"
+            return {"image_url": image_url, "filename": filename}
+        except Exception as e:
+            logger.error(f"S3 upload failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to upload image to S3: {str(e)}")
+    else:
+        # Local dev: Save to static folder
+        filepath = PRODUCT_IMAGES_DIR / filename
+        with open(filepath, "wb") as f:
+            f.write(contents)
+        api_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+        image_url = f"{api_url}/static/product-images/{filename}"
+        return {"image_url": image_url, "filename": filename}
+
+@app.delete("/delete-product-image/")
+async def delete_product_image(
+    filename: str,
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    if S3_BUCKET_NAME:
+        # Production: Delete from S3
+        try:
+            s3 = _get_s3_client()
+            s3.delete_object(Bucket=S3_BUCKET_NAME, Key=f"product-images/{filename}")
+            return {"detail": "Image deleted from S3"}
+        except Exception as e:
+            logger.error(f"S3 delete failed: {e}")
+            return {"detail": "Failed to delete image from S3"}
+    else:
+        # Local dev: Delete from static folder
+        filepath = PRODUCT_IMAGES_DIR / filename
+        if filepath.exists():
+            filepath.unlink()
+            return {"detail": "Image deleted"}
+        return {"detail": "Image not found"}
+
+# Mount static files for serving uploaded images
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 origins = [
     "http://localhost:5173",
