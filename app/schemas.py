@@ -91,7 +91,7 @@ class Partner(PartnerBase):
         from_attributes = True
 
 class TransactionItemBase(BaseModel):
-    product_id: Optional[int] = None
+    product_id: int
     quantity: int
     price: float
     discount: float = 0  # Per-item discount amount
@@ -107,6 +107,7 @@ class TransactionCreate(BaseModel):
 
 class TransactionItemOut(TransactionItemBase):
     id: int
+    product_id: Optional[int] = None # Allow None for old data
     product: Optional[Product] = None
     class Config:
         from_attributes = True
