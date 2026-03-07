@@ -621,8 +621,17 @@ def update_user(user_id: int, user: schemas.UserUpdate, db: Session = Depends(da
 
 # Product Endpoints
 @app.get("/products/", response_model=schemas.PaginatedResponse[schemas.Product])
-def read_products(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    products, total = crud.get_products(db, skip=skip, limit=limit)
+def read_products(
+    skip: int = 0, 
+    limit: int = 100, 
+    search: Optional[str] = None,
+    name: Optional[str] = None,
+    sku: Optional[str] = None,
+    category_id: Optional[int] = None,
+    db: Session = Depends(database.get_db), 
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    products, total = crud.get_products(db, skip=skip, limit=limit, search=search, name=name, sku=sku, category_id=category_id)
     for product in products:
         product.name = product.name.upper()
         if product.category:
@@ -659,8 +668,19 @@ def bulk_delete_products(product_ids: List[int], db: Session = Depends(database.
 
 # Partner Endpoints
 @app.get("/partners/", response_model=schemas.PaginatedResponse[schemas.Partner])
-def read_partners(skip: int = 0, limit: int = 100, type: Optional[str] = None, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    partners, total = crud.get_partners(db, skip=skip, limit=limit, partner_type=type)
+def read_partners(
+    skip: int = 0, 
+    limit: int = 100, 
+    type: Optional[str] = None, 
+    search: Optional[str] = None,
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    address: Optional[str] = None,
+    db: Session = Depends(database.get_db), 
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    partners, total = crud.get_partners(db, skip=skip, limit=limit, partner_type=type, search=search, name=name, email=email, phone=phone, address=address)
     return {"data": partners, "total": total}
 
 @app.post("/partners/", response_model=schemas.Partner)
@@ -695,6 +715,7 @@ def read_transactions(
     from_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
     to_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
     type: Optional[str] = Query(None, description="Transaction type (purchase/sale/return)"),
+    search: Optional[str] = None,
     db: Session = Depends(database.get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
 ):
@@ -716,7 +737,7 @@ def read_transactions(
         except Exception:
             pass
     # Ensure product details are included for each transaction item
-    transactions, total = crud.get_transactions(db, skip=skip, limit=limit, base_query=query)
+    transactions, total = crud.get_transactions(db, skip=skip, limit=limit, base_query=query, search=search)
     return {"data": transactions, "total": total}
 
 @app.put("/transactions/{transaction_id}", response_model=schemas.Transaction)

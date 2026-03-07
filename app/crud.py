@@ -1,4 +1,6 @@
 from sqlalchemy.orm import Session
+import sqlalchemy
+from sqlalchemy import or_
 from . import schemas, models
 
 def update_transaction(db: Session, transaction_id: int, transaction: schemas.TransactionCreate):
@@ -131,13 +133,40 @@ def create_user(db: Session, user: schemas.UserCreate):
 
 
 from sqlalchemy.orm import joinedload
+from sqlalchemy import or_
 
-def get_products(db: Session, skip: int = 0, limit: int = None):
+def get_products(
+    db: Session, 
+    skip: int = 0, 
+    limit: int = None,
+    search: str = None,
+    name: str = None,
+    sku: str = None,
+    category_id: int = None
+):
     query = db.query(models.Product).options(
         joinedload(models.Product.category)
     )
+    
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            or_(
+                models.Product.name.ilike(search_pattern),
+                models.Product.sku.ilike(search_pattern),
+                models.Product.description.ilike(search_pattern)
+            )
+        )
+    if name:
+        query = query.filter(models.Product.name.ilike(f"%{name}%"))
+    if sku:
+        query = query.filter(models.Product.sku.ilike(f"%{sku}%"))
+    if category_id:
+        query = query.filter(models.Product.category_id == category_id)
+
     total = query.count()
-    query = query.offset(skip)
+    if skip is not None:
+        query = query.offset(skip)
     if limit is not None:
         query = query.limit(limit)
     return query.all(), total
@@ -186,10 +215,40 @@ def delete_products_bulk(db: Session, product_ids: List[int]):
         db.rollback()
         raise e
 
-def get_partners(db: Session, skip: int = 0, limit: int = 100, partner_type: str = None):
+def get_partners(
+    db: Session, 
+    skip: int = 0, 
+    limit: int = 100, 
+    partner_type: str = None,
+    search: str = None,
+    name: str = None,
+    email: str = None,
+    phone: str = None,
+    address: str = None
+):
     query = db.query(models.Partner)
     if partner_type:
         query = query.filter(models.Partner.type == partner_type)
+        
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            or_(
+                models.Partner.name.ilike(search_pattern),
+                models.Partner.email.ilike(search_pattern),
+                models.Partner.phone.ilike(search_pattern),
+                models.Partner.address.ilike(search_pattern)
+            )
+        )
+    if name:
+        query = query.filter(models.Partner.name.ilike(f"%{name}%"))
+    if email:
+        query = query.filter(models.Partner.email.ilike(f"%{email}%"))
+    if phone:
+        query = query.filter(models.Partner.phone.ilike(f"%{phone}%"))
+    if address:
+        query = query.filter(models.Partner.address.ilike(f"%{address}%"))
+        
     total = query.count()
     items = query.offset(skip).limit(limit).all()
     return items, total
@@ -220,11 +279,31 @@ def delete_partner(db: Session, partner_id: int):
     db.commit()
     return True
 
-def get_transactions(db: Session, skip: int = 0, limit: int = 100, base_query=None):
+def get_transactions(
+    db: Session, 
+    skip: int = 0, 
+    limit: int = 100, 
+    base_query=None,
+    search: str = None
+):
     # Eager load items, partner, and product details
     from sqlalchemy.orm import joinedload
     query = base_query if base_query is not None else db.query(models.Transaction)
+    
+    if search:
+        # Search by transaction ID or partner name if search string is provided
+        search_pattern = f"%{search}%"
+        # Since partner is a relationship, we join it for the search
+        query = query.join(models.Partner, isouter=True).filter(
+            or_(
+                models.Transaction.id.cast(sqlalchemy.String).ilike(search_pattern),
+                models.Partner.name.ilike(search_pattern)
+            )
+        )
+        
     total = query.count()
+    # Apply ordering before pagination
+    query = query.order_by(models.Transaction.date.desc())
     # Eager load items and their products, and partner
     query = query.options(
         joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
