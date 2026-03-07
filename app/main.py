@@ -659,7 +659,7 @@ def bulk_delete_products(product_ids: List[int], db: Session = Depends(database.
 
 # Partner Endpoints
 @app.get("/partners/", response_model=List[schemas.Partner])
-def read_partners(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+def read_partners(skip: int = 0, limit: int = 1000, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     return crud.get_partners(db, skip=skip, limit=limit)
 
 @app.post("/partners/", response_model=schemas.Partner)
@@ -690,7 +690,7 @@ from datetime import datetime
 @app.get("/transactions/", response_model=List[schemas.Transaction])
 def read_transactions(
     skip: int = 0,
-    limit: int = 100,
+    limit: int = 1000,
     from_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
     to_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
     db: Session = Depends(database.get_db),
