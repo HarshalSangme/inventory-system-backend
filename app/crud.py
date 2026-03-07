@@ -1,6 +1,6 @@
-from sqlalchemy.orm import Session
-import sqlalchemy
-from sqlalchemy import or_
+from typing import List, Optional, Tuple
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_, and_, extract, String, cast
 from . import schemas, models
 
 def update_transaction(db: Session, transaction_id: int, transaction: schemas.TransactionCreate):
@@ -138,11 +138,11 @@ from sqlalchemy import or_
 def get_products(
     db: Session, 
     skip: int = 0, 
-    limit: int = None,
-    search: str = None,
-    name: str = None,
-    sku: str = None,
-    category_id: int = None
+    limit: int = 100,
+    search: Optional[str] = None,
+    name: Optional[str] = None,
+    sku: Optional[str] = None,
+    category_id: Optional[int] = None
 ):
     query = db.query(models.Product).options(
         joinedload(models.Product.category)
@@ -219,12 +219,12 @@ def get_partners(
     db: Session, 
     skip: int = 0, 
     limit: int = 100, 
-    partner_type: str = None,
-    search: str = None,
-    name: str = None,
-    email: str = None,
-    phone: str = None,
-    address: str = None
+    partner_type: Optional[str] = None,
+    search: Optional[str] = None,
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    address: Optional[str] = None
 ):
     query = db.query(models.Partner)
     if partner_type:
@@ -284,22 +284,25 @@ def get_transactions(
     skip: int = 0, 
     limit: int = 100, 
     base_query=None,
-    search: str = None
+    search: Optional[str] = None
 ):
     # Eager load items, partner, and product details
     from sqlalchemy.orm import joinedload
     query = base_query if base_query is not None else db.query(models.Transaction)
     
     if search:
-        # Search by transaction ID or partner name if search string is provided
+        # Search by transaction ID, partner name, SKU, or PRODUCT NAME
         search_pattern = f"%{search}%"
-        # Since partner is a relationship, we join it for the search
-        query = query.join(models.Partner, isouter=True).filter(
+        query = query.join(models.Partner, isouter=True)\
+                     .join(models.TransactionItem, isouter=True)\
+                     .join(models.Product, isouter=True).filter(
             or_(
-                models.Transaction.id.cast(sqlalchemy.String).ilike(search_pattern),
-                models.Partner.name.ilike(search_pattern)
+                cast(models.Transaction.id, String).ilike(search_pattern),
+                models.Partner.name.ilike(search_pattern),
+                models.Product.name.ilike(search_pattern),
+                models.Product.sku.ilike(search_pattern)
             )
-        )
+        ).distinct()
         
     total = query.count()
     # Apply ordering before pagination
