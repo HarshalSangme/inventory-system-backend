@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 # Category Endpoints
-@app.get("/categories/", response_model=List[schemas.Category])
+@app.get("/categories/", response_model=schemas.PaginatedResponse[schemas.Category])
 def read_categories(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    categories = crud.get_categories(db, skip=skip, limit=limit)
+    categories, total = crud.get_categories(db, skip=skip, limit=limit)
     for category in categories:
         category.name = category.name.upper()
-    return categories
+    return {"data": categories, "total": total}
 
 @app.post("/categories/", response_model=schemas.Category)
 def create_category(category: schemas.CategoryCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
@@ -620,14 +620,14 @@ def update_user(user_id: int, user: schemas.UserUpdate, db: Session = Depends(da
     return db_user
 
 # Product Endpoints
-@app.get("/products/", response_model=List[schemas.Product])
-def read_products(skip: int = 0, limit: int = None, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    products = crud.get_products(db, skip=skip, limit=limit)
+@app.get("/products/", response_model=schemas.PaginatedResponse[schemas.Product])
+def read_products(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    products, total = crud.get_products(db, skip=skip, limit=limit)
     for product in products:
         product.name = product.name.upper()
         if product.category:
             product.category.name = product.category.name.upper()
-    return products
+    return {"data": products, "total": total}
 
 @app.post("/products/", response_model=schemas.Product)
 def create_product(product: schemas.ProductCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
@@ -658,9 +658,10 @@ def bulk_delete_products(product_ids: List[int], db: Session = Depends(database.
         raise HTTPException(status_code=500, detail=f"Failed to delete products: {str(e)}")
 
 # Partner Endpoints
-@app.get("/partners/", response_model=List[schemas.Partner])
-def read_partners(skip: int = 0, limit: int = 1000, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    return crud.get_partners(db, skip=skip, limit=limit)
+@app.get("/partners/", response_model=schemas.PaginatedResponse[schemas.Partner])
+def read_partners(skip: int = 0, limit: int = 100, type: Optional[str] = None, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    partners, total = crud.get_partners(db, skip=skip, limit=limit, partner_type=type)
+    return {"data": partners, "total": total}
 
 @app.post("/partners/", response_model=schemas.Partner)
 def create_partner(partner: schemas.PartnerCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
@@ -687,16 +688,19 @@ def delete_partner(partner_id: int, db: Session = Depends(database.get_db), curr
 from fastapi import Query
 from datetime import datetime
 
-@app.get("/transactions/", response_model=List[schemas.Transaction])
+@app.get("/transactions/", response_model=schemas.PaginatedResponse[schemas.Transaction])
 def read_transactions(
     skip: int = 0,
-    limit: int = 1000,
+    limit: int = 100,
     from_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
     to_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
+    type: Optional[str] = Query(None, description="Transaction type (purchase/sale/return)"),
     db: Session = Depends(database.get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
 ):
     query = db.query(models.Transaction)
+    if type:
+        query = query.filter(models.Transaction.type == type)
     if from_date:
         try:
             from_dt = datetime.strptime(from_date, "%Y-%m-%d")
@@ -712,7 +716,8 @@ def read_transactions(
         except Exception:
             pass
     # Ensure product details are included for each transaction item
-    return crud.get_transactions(db, skip=skip, limit=limit, base_query=query)
+    transactions, total = crud.get_transactions(db, skip=skip, limit=limit, base_query=query)
+    return {"data": transactions, "total": total}
 
 @app.put("/transactions/{transaction_id}", response_model=schemas.Transaction)
 def update_transaction(transaction_id: int, transaction: schemas.TransactionCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):

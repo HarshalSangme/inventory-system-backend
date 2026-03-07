@@ -1,8 +1,13 @@
-
-from typing import List, Optional
+from typing import List, Optional, Generic, TypeVar
 from pydantic import BaseModel
 from .models import Role, PartnerType, TransactionType
 from datetime import datetime
+
+T = TypeVar("T")
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    data: List[T]
+    total: int
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None

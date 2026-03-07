@@ -80,7 +80,9 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate):
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def get_categories(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Category).offset(skip).limit(limit).all()
+    total = db.query(models.Category).count()
+    items = db.query(models.Category).offset(skip).limit(limit).all()
+    return items, total
 
 def create_category(db: Session, category: schemas.CategoryCreate):
     db_category = models.Category(**category.dict())
@@ -133,10 +135,12 @@ from sqlalchemy.orm import joinedload
 def get_products(db: Session, skip: int = 0, limit: int = None):
     query = db.query(models.Product).options(
         joinedload(models.Product.category)
-    ).offset(skip)
+    )
+    total = query.count()
+    query = query.offset(skip)
     if limit is not None:
         query = query.limit(limit)
-    return query.all()
+    return query.all(), total
 
 def create_product(db: Session, product: schemas.ProductCreate):
     # Ensure SKU is unique
@@ -182,8 +186,13 @@ def delete_products_bulk(db: Session, product_ids: List[int]):
         db.rollback()
         raise e
 
-def get_partners(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Partner).offset(skip).limit(limit).all()
+def get_partners(db: Session, skip: int = 0, limit: int = 100, partner_type: str = None):
+    query = db.query(models.Partner)
+    if partner_type:
+        query = query.filter(models.Partner.type == partner_type)
+    total = query.count()
+    items = query.offset(skip).limit(limit).all()
+    return items, total
 
 def create_partner(db: Session, partner: schemas.PartnerCreate):
     db_partner = models.Partner(**partner.dict())
@@ -215,6 +224,7 @@ def get_transactions(db: Session, skip: int = 0, limit: int = 100, base_query=No
     # Eager load items, partner, and product details
     from sqlalchemy.orm import joinedload
     query = base_query if base_query is not None else db.query(models.Transaction)
+    total = query.count()
     # Eager load items and their products, and partner
     query = query.options(
         joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
@@ -225,7 +235,7 @@ def get_transactions(db: Session, skip: int = 0, limit: int = 100, base_query=No
     for tx in transactions:
         for item in tx.items:
             _ = item.product  # Access to force load
-    return transactions
+    return transactions, total
 
 def create_transaction(db: Session, transaction: schemas.TransactionCreate):
 
