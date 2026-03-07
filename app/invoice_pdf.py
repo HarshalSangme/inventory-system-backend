@@ -35,6 +35,31 @@ BANK_DETAILS = {
     'iban': 'BH49BISB00010002015324',
 }
 
+# Styles for wrapped table content
+CELL_STYLE = ParagraphStyle(
+    'CellStyle',
+    fontName='Helvetica',
+    fontSize=6.5,
+    leading=8,
+    alignment=TA_LEFT,
+)
+
+SKU_STYLE = ParagraphStyle(
+    'SKUStyle',
+    fontName='Helvetica',
+    fontSize=6,
+    leading=7,
+    alignment=TA_LEFT,
+)
+
+def get_wrapped_height(text, width, style):
+    """Calculate height of wrapped text given a width and style"""
+    if not text:
+        return 0
+    p = Paragraph(str(text), style)
+    _, h = p.wrap(width, 1000) # Using 1000 as a very large max height
+    return h
+
 def number_to_words(num):
     """Convert number to words handling Bahraini Dinar (3 decimal places)"""
     def convert_int_to_words(n):
@@ -147,7 +172,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             f'{net:.3f}',
         ])
     
-    # Column headers and widths - scaled to fit CONTENT_WIDTH exactly (balanced to avoid right-side gaps)
+    # Column headers and table layout
     headers = ['SR.NO', 'ITEM CODE', 'ITEM NAME', 'QTY', 'PRICE', 'DISCOUNT', 'AMT', '%', 'VAT', 'NET AMT']
     # Reduced NET AMT width, increased ITEM NAME
     base_widths = [30, 58, 155, 32, 60, 60, 55, 28, 55, 50]
@@ -156,8 +181,55 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     col_widths = [w * table_width / total_base for w in base_widths]
     table_x = MARGIN_LEFT
     
-    # Row height constant
-    row_height = 16
+    # Base row height
+    MIN_ROW_HEIGHT = 16
+    
+    item_rows = []
+    item_heights = []
+    vat_percent_global = float(invoice_data.get('vat_percent', 0) or 0)
+    total_gross = 0  # sum of price*qty (before discount)
+    total_discount_all = 0  # sum of all per-item discounts
+    total_amt_after_disc = 0  # sum of (price*qty - discount)
+    total_vat_all = 0  # sum of per-item VAT
+    total_net_all = 0  # sum of per-item net amounts
+    
+    for idx, item in enumerate(items):
+        price = float(item.get('price', 0) or 0)
+        qty = float(item.get('quantity', 0) or 0)
+        item_discount = float(item.get('discount', 0) or 0)
+        gross = price * qty
+        amt_after_disc = gross - item_discount
+        item_vat = amt_after_disc * (vat_percent_global / 100) if vat_percent_global > 0 else 0
+        net = amt_after_disc + item_vat
+        
+        total_gross += gross
+        total_discount_all += item_discount
+        total_amt_after_disc += amt_after_disc
+        total_vat_all += item_vat
+        total_net_all += net
+        
+        sku = str(item.get('product', {}).get('sku', '') or item.get('sku', '-'))
+        name = str(item.get('product', {}).get('name', '') or item.get('name', ''))
+        
+        # Calculate dynamic height for this row based on SKU and Name wrapping
+        # Padding: 4pt top + 4pt bottom = 8pt
+        sku_h = get_wrapped_height(sku, col_widths[1] - 6, SKU_STYLE) + 8
+        name_h = get_wrapped_height(name, col_widths[2] - 6, CELL_STYLE) + 8
+        row_h = max(MIN_ROW_HEIGHT, sku_h, name_h)
+        item_heights.append(row_h)
+        
+        item_rows.append([
+            str(idx + 1),
+            sku,
+            name,
+            str(int(qty)),
+            f'{price:.3f}',
+            f'{item_discount:.3f}' if item_discount > 0 else '-',
+            f'{amt_after_disc:.3f}',
+            f'{vat_percent_global:.1f}' if vat_percent_global > 0 else '-',
+            f'{item_vat:.3f}' if item_vat > 0 else '-',
+            f'{net:.3f}',
+        ])
     
     # ==================== LAYOUT CALCULATIONS ====================
     # Fixed positions from page bottom:
@@ -169,34 +241,50 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     
     fixed_bottom_section = 300  # Reduced as bank box is now in flow
     header_height = 140  
-    table_header_height = row_height
+    table_header_height = MIN_ROW_HEIGHT
     
     # Calculate items that fit per page type
     page_height = height - MARGIN_TOP  # We draw footer at absolute 0
     
     # Page 1: Has header
     available_page_1 = page_height - header_height - table_header_height - fixed_bottom_section
-    items_page_1 = max(5, int(available_page_1 / row_height))
     
     # Other pages: No header, just table continuing
     available_page_other = page_height - 20 - table_header_height - fixed_bottom_section  # 20pt margin at top
-    items_page_other = max(10, int(available_page_other / row_height))
     
-    # Calculate page distribution
-    actual_items = len(item_rows)
+    # Calculate page distribution based on actual heights
+    items_per_page = []
+    current_page_items = 0
+    current_page_height = 0
     
-    if actual_items <= items_page_1:
-        items_per_page = [actual_items]
-    else:
-        items_per_page = [items_page_1]
-        remaining = actual_items - items_page_1
-        
-        while remaining > items_page_other:
-            items_per_page.append(items_page_other)
-            remaining -= items_page_other
-        
-        if remaining > 0:
-            items_per_page.append(remaining)
+    is_first_page = True
+    available_height = available_page_1
+    
+    for h in item_heights:
+        if current_page_height + h > available_height:
+            # Page is full
+            if current_page_items == 0:
+                # Force at least one item? (Shouldn't happen if available_height > MIN_ROW_HEIGHT)
+                items_per_page.append(1)
+                current_page_items = 0
+                current_page_height = 0
+            else:
+                items_per_page.append(current_page_items)
+                current_page_items = 1
+                current_page_height = h
+            
+            is_first_page = False
+            available_height = available_page_other
+        else:
+            current_page_items += 1
+            current_page_height += h
+            
+    if current_page_items > 0:
+        items_per_page.append(current_page_items)
+    
+    # If no items, ensure at least one page
+    if not items_per_page:
+        items_per_page = [0]
     
     total_pages = len(items_per_page)
     
@@ -214,13 +302,13 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     # Helper function to draw table header
     def draw_table_header(canvas_obj, start_y):
         canvas_obj.setFillColor(GRAY_DARK)
-        canvas_obj.rect(table_x, start_y - row_height, table_width, row_height, fill=1, stroke=1)
+        canvas_obj.rect(table_x, start_y - MIN_ROW_HEIGHT, table_width, MIN_ROW_HEIGHT, fill=1, stroke=1)
         
         canvas_obj.setFillColor(WHITE)
         canvas_obj.setFont('Helvetica-Bold', 6)
         x = table_x
         for i, header in enumerate(headers):
-            canvas_obj.drawCentredString(x + col_widths[i] / 2, start_y - row_height + 5, header)
+            canvas_obj.drawCentredString(x + col_widths[i] / 2, start_y - MIN_ROW_HEIGHT + 5, header)
             x += col_widths[i]
         
         # Draw header vertical lines
@@ -228,53 +316,38 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         x = table_x
         for i in range(len(col_widths) - 1):
             x += col_widths[i]
-            canvas_obj.line(x, start_y, x, start_y - row_height)
+            canvas_obj.line(x, start_y, x, start_y - MIN_ROW_HEIGHT)
         canvas_obj.setStrokeColor(BLACK)
         
-        return start_y - row_height  # Return data start y
+        return start_y - MIN_ROW_HEIGHT  # Return data start y
     
     # Helper function to draw item rows
-    def draw_item_rows(canvas_obj, start_y, items_to_draw, show_totals=False):
+    def draw_item_rows(canvas_obj, start_y, items_to_draw, item_heights_to_draw, show_totals=False):
         data_start_y = start_y
         
         # Build display rows
         display_rows = items_to_draw.copy()
+        display_heights = item_heights_to_draw.copy()
         actual_item_count = len(display_rows)
         
         if show_totals:
             # Add 5 rows for totals section
             for _ in range(5):
                 display_rows.append([''] * 10)
+                display_heights.append(MIN_ROW_HEIGHT)
         
         totals_start_row = actual_item_count if show_totals else len(display_rows)
         totals_box_width = col_widths[-1] + col_widths[-2]
         totals_x = table_x + table_width - totals_box_width
         
         # Draw outer table border
-        total_table_height = len(display_rows) * row_height
+        total_table_height = sum(display_heights)
         canvas_obj.rect(table_x, data_start_y - total_table_height, table_width, total_table_height)
         
-        # Draw vertical lines for ALL columns
-        # CHANGED: Only draw lines down to the actual items, not the full box height
-        # The user wants "without vertical lines" in the empty space
-        
-        # Calculate height of actual content (items + totals if present)
-        # valid_rows = number of rows that have content or are part of totals
-        # display_rows includes padding rows, so we need to know where to stop
-        
-        # Actually, display_rows has items + padding + totals (if show_totals)
-        # If show_totals is True, we have items -> padding -> totals
-        # If show_totals is False, we have items -> padding
-        
-        # The requirement is: "In this specfific box I dont want vertical lines this spaces should be without vertical lines"
-        # This implies vertical lines should stop after the last item, and resume at totals (if present)?
-        # Or just stop after last item? 
-        # Looking at the image provided (which I can't see but user described), usually empty rows dont have lines.
-        
-        # Let's find how many rows are actual items
+        # Calculate heights of actual content (items + totals if present)
         real_item_count = len(items_to_draw)
-        
-        content_bottom_y = data_start_y - real_item_count * row_height
+        item_section_height = sum(item_heights_to_draw)
+        content_bottom_y = data_start_y - item_section_height
         
         x = table_x
         for i in range(len(col_widths) - 1):
@@ -285,34 +358,28 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             
             if show_totals:
                 # If we have totals, we might need lines in the totals section at the bottom?
-                # The totals section starts at totals_start_row
-                totals_top_y = data_start_y - totals_start_row * row_height
+                totals_top_y = data_start_y - item_section_height
                 totals_bottom_y = data_start_y - total_table_height
                 
-                # Check if this column is part of the totals section (i.e. to the right of totals_x)
-                # totals_value_x is where the split happens in totals
-                # But wait, the previous code drew lines for all columns in totals?
-                # "ensure vertical lines in the totals section align perfectly"
-                
-                # Let's draw lines in the totals section ONLY
+                # Check if this column is part of the totals section
                 if x >= totals_x:
                      canvas_obj.line(x, totals_top_y, x, totals_bottom_y)
 
         if show_totals:
-            # Draw horizontal line above "Items sold" text (separating empty space from totals)
-            items_sold_separator_y = data_start_y - totals_start_row * row_height
-            # Draw this line across the WHOLE width to close the empty box? 
-            # Usually yes.
+            # Draw horizontal line above "Items sold" text
+            items_sold_separator_y = data_start_y - item_section_height
             canvas_obj.line(table_x, items_sold_separator_y, table_x + table_width, items_sold_separator_y)
             
             # Draw horizontal lines in totals section
-            for r in range(1, len(display_rows)):
-                line_y = data_start_y - r * row_height
+            current_y = data_start_y
+            for r in range(len(display_rows)):
+                h = display_heights[r]
+                current_y -= h
                 if r >= totals_start_row:
-                    canvas_obj.line(totals_x, line_y, table_x + table_width, line_y)
+                    canvas_obj.line(totals_x, current_y, table_x + table_width, current_y)
             
             # Vertical line before totals (left side of totals box)
-            canvas_obj.line(totals_x, data_start_y - totals_start_row * row_height, totals_x, data_start_y - total_table_height)
+            canvas_obj.line(totals_x, data_start_y - item_section_height, totals_x, data_start_y - total_table_height)
         else:
              # If not showing totals (intermediate page), we might want a bottom line for the content?
              # Or just leave it open if it continues? 
@@ -323,27 +390,36 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         
         # Fill in item data
         canvas_obj.setFillColor(BLACK)
-        canvas_obj.setFont('Helvetica', 6)
+        current_y = data_start_y
         for row_idx, row in enumerate(display_rows):
             if show_totals and row_idx >= totals_start_row:
                 continue
             
-            row_y = data_start_y - row_idx * row_height
+            h = display_heights[row_idx]
+            row_y = current_y
+            current_y -= h
+            
             x = table_x
             for col_idx, cell in enumerate(row):
                 if col_idx == 0:
-                    canvas_obj.drawCentredString(x + col_widths[col_idx] / 2, row_y - row_height + 5, cell)
-                elif col_idx in [1, 2]:
-                    text = cell[:20] if len(cell) > 20 else cell
-                    canvas_obj.drawString(x + 3, row_y - row_height + 5, text)
-                else:
-                    canvas_obj.drawRightString(x + col_widths[col_idx] - 3, row_y - row_height + 5, cell)
+                    canvas_obj.drawCentredString(x + col_widths[col_idx] / 2, current_y + (h - 6) / 2, cell)
+                elif col_idx == 1: # SKU
+                    p = Paragraph(cell, SKU_STYLE)
+                    p.wrapOn(canvas_obj, col_widths[col_idx] - 6, h)
+                    p.drawOn(canvas_obj, x + 3, current_y + 4)
+                elif col_idx == 2: # ITEM NAME
+                    p = Paragraph(cell, CELL_STYLE)
+                    p.wrapOn(canvas_obj, col_widths[col_idx] - 6, h)
+                    p.drawOn(canvas_obj, x + 3, current_y + 4)
+                elif col_idx in [3, 4, 5, 6, 7, 8, 9]:
+                    canvas_obj.setFont('Helvetica', 6)
+                    canvas_obj.drawRightString(x + col_widths[col_idx] - 3, current_y + (h - 6) / 2, cell)
                 x += col_widths[col_idx]
         
-        return data_start_y - total_table_height, totals_start_row, totals_x, totals_box_width
+        return data_start_y - total_table_height, totals_start_row, totals_x, totals_box_width, sum(display_heights[:totals_start_row])
     
     # Helper function to draw totals section
-    def draw_totals_section(canvas_obj, data_start_y, totals_start_row, totals_x, totals_box_width):
+    def draw_totals_section(canvas_obj, data_start_y, totals_start_row, totals_x, totals_box_width, items_height):
         # Use pre-computed totals from item processing
         totals_data = [
             ('GROSS AMT', f'{total_gross:.3f}'),
@@ -352,47 +428,42 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             ('Balance C/f', '-'),
         ]
         
-        
         totals_label_width = totals_box_width * 0.55
         # Align vertical line with table column (Between VAT and Net Amt)
         totals_value_x = totals_x + col_widths[-2]
         
         canvas_obj.setStrokeColor(BLACK)
-        canvas_obj.line(totals_value_x, data_start_y - totals_start_row * row_height,
-                       totals_value_x, data_start_y - (totals_start_row + 5) * row_height)
+        canvas_obj.line(totals_value_x, data_start_y - items_height,
+                       totals_value_x, data_start_y - items_height - 5 * MIN_ROW_HEIGHT)
         
         canvas_obj.setFont('Helvetica-Bold', 7)
         canvas_obj.setFillColor(BLACK)
         for i, (label, value) in enumerate(totals_data):
-            row_y = data_start_y - (totals_start_row + i) * row_height
-            canvas_obj.drawString(totals_x + 6, row_y - row_height + 5, label)
-            canvas_obj.drawRightString(table_x + table_width - 6, row_y - row_height + 5, value)
+            row_y = data_start_y - items_height - i * MIN_ROW_HEIGHT
+            canvas_obj.drawString(totals_x + 6, row_y - MIN_ROW_HEIGHT + 5, label)
+            canvas_obj.drawRightString(table_x + table_width - 6, row_y - MIN_ROW_HEIGHT + 5, value)
         
         # NET AMT BHD row (highlighted)
-        net_row_y = data_start_y - (totals_start_row + 4) * row_height
+        net_row_y = data_start_y - items_height - 4 * MIN_ROW_HEIGHT
         canvas_obj.setFillColor(GRAY_DARK)
-        canvas_obj.rect(totals_x, net_row_y - row_height, totals_box_width, row_height, fill=1, stroke=1)
+        canvas_obj.rect(totals_x, net_row_y - MIN_ROW_HEIGHT, totals_box_width, MIN_ROW_HEIGHT, fill=1, stroke=1)
         canvas_obj.setFillColor(WHITE)
         canvas_obj.setFont('Helvetica-Bold', 7)
-        canvas_obj.drawString(totals_x + 6, net_row_y - row_height + 5, 'NET AMT BHD:')
-        canvas_obj.drawRightString(table_x + table_width - 6, net_row_y - row_height + 5, f'{total_net_all:.3f}')
+        canvas_obj.drawString(totals_x + 6, net_row_y - MIN_ROW_HEIGHT + 5, 'NET AMT BHD:')
+        canvas_obj.drawRightString(table_x + table_width - 6, net_row_y - MIN_ROW_HEIGHT + 5, f'{total_net_all:.3f}')
         
         # "*Items sold..." text
-        items_sold_y = data_start_y - (totals_start_row + 4) * row_height
+        items_sold_y = data_start_y - items_height - 4 * MIN_ROW_HEIGHT
         canvas_obj.setFillColor(colors.Color(0.1, 0.3, 0.6))
         canvas_obj.setFont('Helvetica-Oblique', 7)
-        canvas_obj.drawString(table_x + 6, items_sold_y - row_height + 5, '*Items sold will not be taken back or returned.')
+        canvas_obj.drawString(table_x + 6, items_sold_y - MIN_ROW_HEIGHT + 5, '*Items sold will not be taken back or returned.')
         
         # === BANK DETAILS BOX ===
         # Positioned to the left of Totals box, filling the gap
-        # Reduced width from 180 to 140
         bank_box_width = 140
         bank_box_height = 50
         # Positioned slightly above the bottom of the totals box (aligned with NET AMT roughly?)
-        # Let's align it with bottom of table (same as Net Amt)
-        # User requested to lift it up to be centered relative to the totals box height (80pt) vs bank box (50pt)
-        # Gap = (80-50)/2 = 15pt. So lift bottom by 15pt.
-        bank_y = (net_row_y - row_height) + 15 + bank_box_height
+        bank_y = (net_row_y - MIN_ROW_HEIGHT) + 15 + bank_box_height
         # X position: Right aligned to the Totals box with 10pt gap
         bank_x = totals_x - bank_box_width - 10
         
@@ -410,7 +481,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         canvas_obj.drawString(bank_x + 5, bank_y - 30, f"Name: {BANK_DETAILS['bank']}")
         canvas_obj.drawString(bank_x + 5, bank_y - 40, f"IBAN: {BANK_DETAILS['iban']}")
         
-        return net_row_y - row_height
+        return net_row_y - MIN_ROW_HEIGHT
     
     # Helper function to draw IN WORDS row
     def draw_in_words(canvas_obj, y_pos):
@@ -635,7 +706,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         # Get items for this page from pre-calculated distribution
         items_this_page = items_per_page[page_num - 1]
         page_items = item_rows[current_item_idx:current_item_idx + items_this_page]
-        current_item_idx += len(page_items)
+        page_heights = item_heights[current_item_idx:current_item_idx + items_this_page]
         
         # Draw page number
         draw_page_number(c, page_num, total_pages)
@@ -644,20 +715,25 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             # Page 1: Draw header + table
             table_y = draw_header(c)
             data_start_y = draw_table_header(c, table_y)
-            table_end_y, totals_start_row, totals_x, totals_box_width = draw_item_rows(
-                c, data_start_y, page_items, show_totals=is_last_page
+            page_heights = item_heights[current_item_idx:current_item_idx + items_this_page]
+            table_end_y, totals_start_row, totals_x, totals_box_width, items_height = draw_item_rows(
+                c, data_start_y, page_items, page_heights, show_totals=is_last_page
             )
         else:
             # Other pages: Table starts near top
             table_y = height - MARGIN_TOP - 20
             data_start_y = draw_table_header(c, table_y)
-            table_end_y, totals_start_row, totals_x, totals_box_width = draw_item_rows(
-                c, data_start_y, page_items, show_totals=is_last_page
+            page_heights = item_heights[current_item_idx:current_item_idx + items_this_page]
+            table_end_y, totals_start_row, totals_x, totals_box_width, items_height = draw_item_rows(
+                c, data_start_y, page_items, page_heights, show_totals=is_last_page
             )
+        
+        # Update index AFTER getting page_heights
+        current_item_idx += len(page_items)
         
         if is_last_page:
             # Draw totals section
-            draw_totals_section(c, data_start_y, totals_start_row, totals_x, totals_box_width)
+            draw_totals_section(c, data_start_y, totals_start_row, totals_x, totals_box_width, items_height)
             # Draw IN WORDS row
             draw_in_words(c, table_end_y)
             # Draw signature section (position relative to table end)
