@@ -455,7 +455,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         canvas_obj.drawRightString(table_x + table_width - 6, net_row_y - MIN_ROW_HEIGHT + 5, f'{total_net_all:.3f}')
         
         totals_data_bottom = [
-            ('PREVIOUS BAL', f'{previous_balance:.3f}'),
+            ('PREV BAL', f'{previous_balance:.3f}'),
             ('TOTAL DUE', f'{total_due:.3f}'),
             ('PAID TODAY', f'{amount_paid:.3f}'),
         ]
