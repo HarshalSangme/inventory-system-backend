@@ -736,14 +736,30 @@ from fastapi import Query
 from datetime import datetime
 from sqlalchemy.orm import joinedload
 
+@app.get("/transactions/counts")
+def get_transaction_counts(
+    type: Optional[str] = "sale",
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    base = db.query(models.Transaction)
+    if type:
+        base = base.filter(models.Transaction.type == type)
+    total = base.count()
+    unpaid = base.filter(models.Transaction.payment_status == 'unpaid').count()
+    partial = base.filter(models.Transaction.payment_status == 'partial').count()
+    paid = base.filter(models.Transaction.payment_status == 'paid').count()
+    return {"total": total, "unpaid": unpaid, "partial": partial, "paid": paid}
+
 @app.get("/transactions/", response_model=schemas.PaginatedResponse[schemas.Transaction])
 def read_transactions(
     skip: int = 0,
-    limit: int = 20,
+    limit: int = 25,
     type: Optional[str] = None,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     partner_id: Optional[int] = None,
+    payment_status: Optional[str] = None,
     search: Optional[str] = None,
     db: Session = Depends(database.get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
@@ -752,7 +768,7 @@ def read_transactions(
         joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
         joinedload(models.Transaction.partner)
     )
-    
+
     # Apply filters
     if type:
         query = query.filter(models.Transaction.type == type)
@@ -762,9 +778,12 @@ def read_transactions(
         query = query.filter(models.Transaction.date >= date_from)
     if date_to:
         query = query.filter(models.Transaction.date <= date_to)
-        
+    if payment_status:
+        query = query.filter(models.Transaction.payment_status == payment_status)
+
     transactions, total = crud.get_transactions(db, skip, limit, query, search)
     return {"data": transactions, "total": total}
+
 
 @app.post("/payments/", response_model=schemas.Payment)
 def create_payment(payment: schemas.PaymentCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
