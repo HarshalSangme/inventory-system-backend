@@ -4,7 +4,7 @@ load_dotenv()
 from datetime import timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request, Query
 import threading
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from . import crud, models, schemas, auth, database
 from .invoice_pdf import generate_invoice_pdf
+from .report_service import get_stock_report_df, get_sales_report_df, get_purchase_report_df, get_financial_report_df, export_df_to_excel, export_df_to_csv
 from .database import init_database
 import pandas as pd
 import io
@@ -27,6 +27,7 @@ import time
 import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from .models import Base
+from . import crud, models, schemas, auth, database
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -771,6 +772,43 @@ def create_transaction(transaction: schemas.TransactionCreate, db: Session = Dep
 @app.get("/dashboard")
 def get_dashboard(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     return crud.get_dashboard_stats(db)
+
+@app.get("/reports/{report_type}/export")
+def export_report(
+    report_type: str,
+    format: str = Query("excel", description="Export format: excel or csv"),
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    import datetime
+    if report_type == "stock":
+        df = get_stock_report_df(db, search=search)
+    elif report_type == "sales":
+        df = get_sales_report_df(db, from_date=from_date, to_date=to_date, search=search)
+    elif report_type == "purchase":
+        df = get_purchase_report_df(db, from_date=from_date, to_date=to_date, search=search)
+    elif report_type == "profit":
+        df = get_financial_report_df(db, from_date=from_date, to_date=to_date)
+    else:
+        raise HTTPException(status_code=404, detail="Unknown report type")
+
+    if format == "excel":
+        file_obj = export_df_to_excel(df)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = f"{report_type}_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    else:
+        file_obj = export_df_to_csv(df)
+        media_type = "text/csv"
+        filename = f"{report_type}_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+    return StreamingResponse(
+        file_obj,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 # Invoice PDF Generation
 class InvoiceEditData(BaseModel):
