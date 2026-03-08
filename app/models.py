@@ -69,6 +69,19 @@ class TransactionType(str, enum.Enum):
     SALE = "sale"
     RETURN = "return"
 
+class PaymentStatus(str, enum.Enum):
+    PAID = "paid"
+    PARTIAL = "partial"
+    UNPAID = "unpaid"
+
+class PaymentChannel(str, enum.Enum):
+    CASH = "cash"
+    UPI = "upi"
+    CARD = "card"
+    BANK_TRANSFER = "bank_transfer"
+    CHEQUE = "cheque"
+    OTHER = "other"
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
@@ -80,9 +93,50 @@ class Transaction(Base):
     vat_percent = Column(Float, default=0.0)
     sales_person = Column(String, nullable=True)
     payment_method = Column(String, default="Cash")
+    amount_paid = Column(Float, default=0.0)
+    payment_status = Column(String, default=PaymentStatus.UNPAID.value)
 
     partner = relationship("Partner", back_populates="transactions")
     items = relationship("TransactionItem", back_populates="transaction")
+    payments = relationship("Payment", back_populates="transaction")
+    ledger_entries = relationship("LedgerEntry", back_populates="transaction")
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    transaction_id = Column(Integer, ForeignKey("transactions.id"))
+    partner_id = Column(Integer, ForeignKey("partners.id"))
+    amount = Column(Float)
+    date = Column(DateTime, default=datetime.utcnow)
+    payment_method = Column(String, default="Cash") # Legacy
+    channel = Column(String, default=PaymentChannel.CASH.value)
+    reference_id = Column(String, nullable=True) # Transaction ID from UPI/Card
+    notes = Column(String, nullable=True)
+
+    transaction = relationship("Transaction", back_populates="payments")
+    partner = relationship("Partner")
+    ledger_entries = relationship("LedgerEntry", back_populates="payment")
+
+class LedgerEntryType(str, enum.Enum):
+    DEBIT = "debit"   # Increases money owed TO the partner (e.g., Purchase Invoice) or decreases money owed BY them
+    CREDIT = "credit" # Increases money owed BY the partner (e.g., Sale Invoice) or decreases money owed TO them
+
+class LedgerEntry(Base):
+    __tablename__ = "ledger_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    partner_id = Column(Integer, ForeignKey("partners.id"))
+    transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
+    payment_id = Column(Integer, ForeignKey("payments.id"), nullable=True)
+    amount = Column(Float)
+    type = Column(String) # LedgerEntryType
+    date = Column(DateTime, default=datetime.utcnow)
+    description = Column(String, nullable=True)
+
+    partner = relationship("Partner")
+    transaction = relationship("Transaction", back_populates="ledger_entries")
+    payment = relationship("Payment", back_populates="ledger_entries")
 
 class TransactionItem(Base):
     __tablename__ = "transaction_items"

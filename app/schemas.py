@@ -109,6 +109,42 @@ class TransactionCreate(BaseModel):
     items: List[TransactionItemBase]
     sales_person: Optional[str] = None
     payment_method: Optional[str] = "Cash"
+    amount_paid: Optional[float] = 0.0
+    payment_channel: Optional[str] = "cash"
+    payment_reference: Optional[str] = None
+
+class PaymentBase(BaseModel):
+    transaction_id: int
+    partner_id: int
+    amount: float
+    payment_method: Optional[str] = "Cash"
+    channel: Optional[str] = "cash"
+    reference_id: Optional[str] = None
+    notes: Optional[str] = None
+
+class PaymentCreate(PaymentBase):
+    pass
+
+class LedgerEntryBase(BaseModel):
+    partner_id: int
+    transaction_id: Optional[int] = None
+    payment_id: Optional[int] = None
+    amount: float
+    type: str # LedgerEntryType
+    description: Optional[str] = None
+
+class LedgerEntry(LedgerEntryBase):
+    id: int
+    date: datetime
+    class Config:
+        from_attributes = True
+
+class Payment(PaymentBase):
+    id: int
+    date: datetime
+    ledger_entries: List[LedgerEntry] = []
+    class Config:
+        from_attributes = True
 
 class TransactionItemOut(TransactionItemBase):
     id: int
@@ -125,7 +161,11 @@ class Transaction(BaseModel):
     total_amount: float
     sales_person: Optional[str] = None
     payment_method: Optional[str] = "Cash"
+    amount_paid: float
+    payment_status: str
     partner: Optional[Partner] = None
     items: List[TransactionItemOut] = []
+    payments: List[Payment] = []
+    ledger_entries: List[LedgerEntry] = []
     class Config:
         from_attributes = True

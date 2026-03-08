@@ -319,6 +319,18 @@ def get_transactions(
             _ = item.product  # Access to force load
     return transactions, total
 
+def create_ledger_entry(db: Session, partner_id: int, amount: float, type: str, transaction_id: Optional[int] = None, payment_id: Optional[int] = None, description: Optional[str] = None):
+    db_entry = models.LedgerEntry(
+        partner_id=partner_id,
+        transaction_id=transaction_id,
+        payment_id=payment_id,
+        amount=amount,
+        type=type,
+        description=description
+    )
+    db.add(db_entry)
+    return db_entry
+
 def create_transaction(db: Session, transaction: schemas.TransactionCreate):
 
     # Calculate Subtotal (price × qty - discount per item)
@@ -369,7 +381,41 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
                 if product.stock_quantity < item.quantity:
                     raise ValueError(f"Not enough stock for product {product.name}. Available: {product.stock_quantity}, Requested: {item.quantity}")
                 product.stock_quantity -= item.quantity
+        
+    # Handle initial payment
+    amount_paid = getattr(transaction, 'amount_paid', 0.0) or 0.0
+    db_transaction.amount_paid = amount_paid
+    if amount_paid >= db_transaction.total_amount:
+        db_transaction.payment_status = models.PaymentStatus.PAID.value
+    elif amount_paid > 0:
+        db_transaction.payment_status = models.PaymentStatus.PARTIAL.value
+    else:
+        db_transaction.payment_status = models.PaymentStatus.UNPAID.value
+        
+    if amount_paid > 0:
+        db_payment = models.Payment(
+            transaction_id=db_transaction.id,
+            partner_id=db_transaction.partner_id,
+            amount=amount_paid,
+            payment_method=db_transaction.payment_method, # Legacy
+            channel=transaction.payment_channel or models.PaymentChannel.CASH.value,
+            reference_id=transaction.payment_reference
+        )
+        db.add(db_payment)
+        db.flush() # Get payment ID
 
+    # --- Ledger Bookkeeping ---
+    # 1. Record the full invoice amount
+    if db_transaction.type == models.TransactionType.SALE.value:
+        create_ledger_entry(db, db_transaction.partner_id, db_transaction.total_amount, models.LedgerEntryType.DEBIT.value, transaction_id=db_transaction.id, description=f"Sale Invoice #{db_transaction.id}")
+        # 2. Record the payment if any
+        if amount_paid > 0:
+            create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.CREDIT.value, transaction_id=db_transaction.id, payment_id=db_payment.id, description=f"Payment Received for Sale #{db_transaction.id}")
+    elif db_transaction.type == models.TransactionType.PURCHASE.value:
+        create_ledger_entry(db, db_transaction.partner_id, db_transaction.total_amount, models.LedgerEntryType.CREDIT.value, transaction_id=db_transaction.id, description=f"Purchase Invoice #{db_transaction.id}")
+        # 2. Record the payment if any
+        if amount_paid > 0:
+            create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.DEBIT.value, transaction_id=db_transaction.id, payment_id=db_payment.id, description=f"Payment Sent for Purchase #{db_transaction.id}")
         
     db.commit()
     db.refresh(db_transaction)
@@ -442,3 +488,106 @@ def get_dashboard_stats(db: Session):
         "top_products": top_products,
         "top_customers": top_customers
     }
+def record_payment(db: Session, payment: schemas.PaymentCreate):
+    db_payment = models.Payment(**payment.dict())
+    db.add(db_payment)
+    
+    # Update transaction
+    transaction = db.query(models.Transaction).filter(models.Transaction.id == payment.transaction_id).first()
+    if transaction:
+        transaction.amount_paid += payment.amount
+        if transaction.amount_paid >= transaction.total_amount:
+            transaction.payment_status = models.PaymentStatus.PAID.value
+        elif transaction.amount_paid > 0:
+            transaction.payment_status = models.PaymentStatus.PARTIAL.value
+        else:
+            transaction.payment_status = models.PaymentStatus.UNPAID.value
+            
+        # --- Ledger Bookkeeping ---
+        description = payment.notes or f"Payment for {transaction.type} #{transaction.id}"
+        if transaction.type == models.TransactionType.SALE.value:
+            create_ledger_entry(db, transaction.partner_id, payment.amount, models.LedgerEntryType.CREDIT.value, transaction_id=transaction.id, payment_id=db_payment.id, description=description)
+        else:
+            create_ledger_entry(db, transaction.partner_id, payment.amount, models.LedgerEntryType.DEBIT.value, transaction_id=transaction.id, payment_id=db_payment.id, description=description)
+
+    db.commit()
+    db.refresh(db_payment)
+    return db_payment
+
+def get_accounts_summary(db: Session):
+    from sqlalchemy import func, case
+    
+    # Receivables (Money owed by customers - Sum of DEBITS minus sum of CREDITS for customers)
+    # Using ledger entries for more accurate and scalable calculation
+    total_receivables = db.query(
+        func.sum(
+            case(
+                (models.LedgerEntry.type == models.LedgerEntryType.DEBIT.value, models.LedgerEntry.amount),
+                else_=-models.LedgerEntry.amount
+            )
+        )
+    ).join(models.Partner).filter(
+        models.Partner.type == models.PartnerType.CUSTOMER.value
+    ).scalar() or 0.0
+    
+    # Payables (Money owed to vendors - Sum of CREDITS minus sum of DEBITS for vendors)
+    total_payables = db.query(
+        func.sum(
+            case(
+                (models.LedgerEntry.type == models.LedgerEntryType.CREDIT.value, models.LedgerEntry.amount),
+                else_=-models.LedgerEntry.amount
+            )
+        )
+    ).join(models.Partner).filter(
+        models.Partner.type == models.PartnerType.VENDOR.value
+    ).scalar() or 0.0
+    
+    return {
+        "total_receivables": total_receivables,
+        "total_payables": total_payables
+    }
+
+def get_partner_balance_at_date(db: Session, partner_id: int, target_date):
+    from sqlalchemy import func, case
+    
+    balance = db.query(
+        func.sum(
+            case(
+                (models.LedgerEntry.type == models.LedgerEntryType.DEBIT.value, models.LedgerEntry.amount),
+                else_=-models.LedgerEntry.amount
+            )
+        )
+    ).filter(
+        models.LedgerEntry.partner_id == partner_id,
+        models.LedgerEntry.date < target_date
+    ).scalar() or 0.0
+    
+    return balance
+
+def get_partner_statement(db: Session, partner_id: int):
+    # Fetch all ledger entries for a partner, ordered by date
+    entries = db.query(models.LedgerEntry).filter(
+        models.LedgerEntry.partner_id == partner_id
+    ).order_by(models.LedgerEntry.date.asc()).all()
+    
+    # Calculate running balance
+    statement = []
+    running_balance = 0.0
+    for entry in entries:
+        if entry.type == models.LedgerEntryType.DEBIT.value:
+            running_balance += entry.amount
+        else:
+            running_balance -= entry.amount
+        
+        statement.append({
+            "id": entry.id,
+            "date": entry.date,
+            "type": entry.type,
+            "amount": entry.amount,
+            "balance": running_balance,
+            "description": entry.description,
+            "transaction_id": entry.transaction_id,
+            "payment_id": entry.payment_id
+        })
+    
+    return statement[::-1] # Return most recent first

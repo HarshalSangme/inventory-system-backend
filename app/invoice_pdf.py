@@ -239,7 +239,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     # - Thank You line: 95pt (Below signatures)
     # - Bank box: Moved to totals section (dynamic)
     
-    fixed_bottom_section = 300  # Reduced as bank box is now in flow
+    fixed_bottom_section = 350  # Increased to fit 8-row totals box
     header_height = 140  
     table_header_height = MIN_ROW_HEIGHT
     
@@ -331,8 +331,8 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         actual_item_count = len(display_rows)
         
         if show_totals:
-            # Add 5 rows for totals section
-            for _ in range(5):
+            # Add 8 rows for totals section
+            for _ in range(8):
                 display_rows.append([''] * 10)
                 display_heights.append(MIN_ROW_HEIGHT)
         
@@ -420,31 +420,33 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
     
     # Helper function to draw totals section
     def draw_totals_section(canvas_obj, data_start_y, totals_start_row, totals_x, totals_box_width, items_height):
-        # Use pre-computed totals from item processing
-        totals_data = [
-            ('GROSS AMT', f'{total_gross:.3f}'),
-            ('DISCOUNT', f'{total_discount_all:.3f}' if total_discount_all > 0 else '-'),
-            ('VAT AMT', f'{total_vat_all:.3f}' if total_vat_all > 0 else '-'),
-            ('Balance C/f', '-'),
-        ]
-        
+        previous_balance = float(invoice_data.get('previous_balance', 0) or 0)
+        amount_paid = float(invoice_data.get('amount_paid', 0) or 0)
+        total_due = total_net_all + previous_balance
+        remaining_balance = total_due - amount_paid
+
         totals_label_width = totals_box_width * 0.55
-        # Align vertical line with table column (Between VAT and Net Amt)
         totals_value_x = totals_x + col_widths[-2]
         
         canvas_obj.setStrokeColor(BLACK)
         canvas_obj.line(totals_value_x, data_start_y - items_height,
-                       totals_value_x, data_start_y - items_height - 5 * MIN_ROW_HEIGHT)
+                       totals_value_x, data_start_y - items_height - 8 * MIN_ROW_HEIGHT)
+        
+        totals_data_top = [
+            ('GROSS AMT', f'{total_gross:.3f}'),
+            ('DISCOUNT', f'{total_discount_all:.3f}' if total_discount_all > 0 else '-'),
+            ('VAT AMT', f'{total_vat_all:.3f}' if total_vat_all > 0 else '-'),
+        ]
         
         canvas_obj.setFont('Helvetica-Bold', 7)
         canvas_obj.setFillColor(BLACK)
-        for i, (label, value) in enumerate(totals_data):
+        for i, (label, value) in enumerate(totals_data_top):
             row_y = data_start_y - items_height - i * MIN_ROW_HEIGHT
             canvas_obj.drawString(totals_x + 6, row_y - MIN_ROW_HEIGHT + 5, label)
             canvas_obj.drawRightString(table_x + table_width - 6, row_y - MIN_ROW_HEIGHT + 5, value)
         
         # NET AMT BHD row (highlighted)
-        net_row_y = data_start_y - items_height - 4 * MIN_ROW_HEIGHT
+        net_row_y = data_start_y - items_height - 3 * MIN_ROW_HEIGHT
         canvas_obj.setFillColor(GRAY_DARK)
         canvas_obj.rect(totals_x, net_row_y - MIN_ROW_HEIGHT, totals_box_width, MIN_ROW_HEIGHT, fill=1, stroke=1)
         canvas_obj.setFillColor(WHITE)
@@ -452,23 +454,40 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         canvas_obj.drawString(totals_x + 6, net_row_y - MIN_ROW_HEIGHT + 5, 'NET AMT BHD:')
         canvas_obj.drawRightString(table_x + table_width - 6, net_row_y - MIN_ROW_HEIGHT + 5, f'{total_net_all:.3f}')
         
+        totals_data_bottom = [
+            ('PREVIOUS BAL', f'{previous_balance:.3f}'),
+            ('TOTAL DUE', f'{total_due:.3f}'),
+            ('PAID TODAY', f'{amount_paid:.3f}'),
+        ]
+        
+        canvas_obj.setFillColor(BLACK)
+        for i, (label, value) in enumerate(totals_data_bottom):
+            row_y = data_start_y - items_height - (i + 4) * MIN_ROW_HEIGHT
+            canvas_obj.drawString(totals_x + 6, row_y - MIN_ROW_HEIGHT + 5, label)
+            canvas_obj.drawRightString(table_x + table_width - 6, row_y - MIN_ROW_HEIGHT + 5, value)
+
+        # REMAINING BALANCE row (highlighted)
+        rem_row_y = data_start_y - items_height - 7 * MIN_ROW_HEIGHT
+        canvas_obj.setFillColor(GRAY_DARK)
+        canvas_obj.rect(totals_x, rem_row_y - MIN_ROW_HEIGHT, totals_box_width, MIN_ROW_HEIGHT, fill=1, stroke=1)
+        canvas_obj.setFillColor(WHITE)
+        canvas_obj.setFont('Helvetica-Bold', 7)
+        canvas_obj.drawString(totals_x + 6, rem_row_y - MIN_ROW_HEIGHT + 5, 'BAL DUE:')
+        canvas_obj.drawRightString(table_x + table_width - 6, rem_row_y - MIN_ROW_HEIGHT + 5, f'{remaining_balance:.3f}')
+
         # "*Items sold..." text
-        items_sold_y = data_start_y - items_height - 4 * MIN_ROW_HEIGHT
+        items_sold_y = data_start_y - items_height - 8 * MIN_ROW_HEIGHT
         canvas_obj.setFillColor(colors.Color(0.1, 0.3, 0.6))
         canvas_obj.setFont('Helvetica-Oblique', 7)
         canvas_obj.drawString(table_x + 6, items_sold_y - MIN_ROW_HEIGHT + 5, '*Items sold will not be taken back or returned.')
         
         # === BANK DETAILS BOX ===
-        # Positioned to the left of Totals box, filling the gap
         bank_box_width = 140
         bank_box_height = 50
-        # Positioned slightly above the bottom of the totals box (aligned with NET AMT roughly?)
-        bank_y = (net_row_y - MIN_ROW_HEIGHT) + 15 + bank_box_height
-        # X position: Right aligned to the Totals box with 10pt gap
+        bank_y = (rem_row_y - MIN_ROW_HEIGHT) + 15 + bank_box_height
         bank_x = totals_x - bank_box_width - 10
         
         canvas_obj.setStrokeColor(BLACK)
-        # Check if we have enough space for bank box, otherwise shift left
         if bank_x < table_x: bank_x = table_x + 10 # Fallback
         
         canvas_obj.roundRect(bank_x, bank_y - bank_box_height, bank_box_width, bank_box_height, 3, fill=0, stroke=1)
@@ -481,7 +500,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         canvas_obj.drawString(bank_x + 5, bank_y - 30, f"Name: {BANK_DETAILS['bank']}")
         canvas_obj.drawString(bank_x + 5, bank_y - 40, f"IBAN: {BANK_DETAILS['iban']}")
         
-        return net_row_y - MIN_ROW_HEIGHT
+        return rem_row_y - MIN_ROW_HEIGHT
     
     # Helper function to draw IN WORDS row
     def draw_in_words(canvas_obj, y_pos):

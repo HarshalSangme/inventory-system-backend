@@ -175,6 +175,32 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Migration error (categories): {e}")
 
+    # Step 1.8: Migrate — add payment tracking columns to transactions + create new tables
+    try:
+        insp = inspect(database.engine)
+        if insp.has_table("transactions"):
+            existing_cols = {c['name'] for c in insp.get_columns('transactions')}
+            payment_migrations = [
+                ('amount_paid', 'FLOAT DEFAULT 0.0'),
+                ('payment_status', "VARCHAR DEFAULT 'unpaid'"),
+            ]
+            with database.engine.connect() as conn:
+                for col_name, col_type in payment_migrations:
+                    if col_name not in existing_cols:
+                        conn.execute(text(f'ALTER TABLE transactions ADD COLUMN {col_name} {col_type}'))
+                        conn.commit()
+                        logger.info(f"Migration: Added column '{col_name}' to transactions table")
+    except Exception as e:
+        logger.error(f"Migration error (transactions payment columns): {e}")
+
+    # Step 1.9: Create payments and ledger_entries tables if they don't exist
+    try:
+        from app import models as _models
+        _models.Base.metadata.create_all(bind=database.engine)
+        logger.info("Migration: Ensured payments and ledger_entries tables exist")
+    except Exception as e:
+        logger.error(f"Migration error (payments/ledger_entries tables): {e}")
+
     # Step 2: Create default admin user
     db = next(database.get_db())
     try:
@@ -708,38 +734,49 @@ def delete_partner(partner_id: int, db: Session = Depends(database.get_db), curr
 
 from fastapi import Query
 from datetime import datetime
+from sqlalchemy.orm import joinedload
 
 @app.get("/transactions/", response_model=schemas.PaginatedResponse[schemas.Transaction])
 def read_transactions(
     skip: int = 0,
-    limit: int = 100,
-    from_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
-    to_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
-    type: Optional[str] = Query(None, description="Transaction type (purchase/sale/return)"),
+    limit: int = 20,
+    type: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    partner_id: Optional[int] = None,
     search: Optional[str] = None,
     db: Session = Depends(database.get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
 ):
-    query = db.query(models.Transaction)
+    query = db.query(models.Transaction).options(
+        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
+        joinedload(models.Transaction.partner)
+    )
+    
+    # Apply filters
     if type:
         query = query.filter(models.Transaction.type == type)
-    if from_date:
-        try:
-            from_dt = datetime.strptime(from_date, "%Y-%m-%d")
-            query = query.filter(models.Transaction.date >= from_dt)
-        except Exception:
-            pass
-    if to_date:
-        try:
-            to_dt = datetime.strptime(to_date, "%Y-%m-%d")
-            # Add 1 day to include the end date fully
-            to_dt = to_dt.replace(hour=23, minute=59, second=59)
-            query = query.filter(models.Transaction.date <= to_dt)
-        except Exception:
-            pass
-    # Ensure product details are included for each transaction item
-    transactions, total = crud.get_transactions(db, skip=skip, limit=limit, base_query=query, search=search)
+    if partner_id:
+        query = query.filter(models.Transaction.partner_id == partner_id)
+    if date_from:
+        query = query.filter(models.Transaction.date >= date_from)
+    if date_to:
+        query = query.filter(models.Transaction.date <= date_to)
+        
+    transactions, total = crud.get_transactions(db, skip, limit, query, search)
     return {"data": transactions, "total": total}
+
+@app.post("/payments/", response_model=schemas.Payment)
+def create_payment(payment: schemas.PaymentCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    return crud.record_payment(db, payment)
+
+@app.get("/accounts/summary")
+def get_accounts_summary(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    return crud.get_accounts_summary(db)
+
+@app.get("/partners/{partner_id}/statement")
+def get_partner_statement(partner_id: int, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    return crud.get_partner_statement(db, partner_id)
 
 @app.put("/transactions/{transaction_id}", response_model=schemas.Transaction)
 def update_transaction(transaction_id: int, transaction: schemas.TransactionCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
@@ -858,6 +895,8 @@ def generate_invoice(
             for item in transaction.items
         ],
         'sales_person': transaction.sales_person or edit_data.sales_person,
+        'previous_balance': crud.get_partner_balance_at_date(db, transaction.partner_id, transaction.date) if transaction.partner_id else 0.0,
+        'amount_paid': float(transaction.amount_paid) if transaction.amount_paid else 0.0,
     }
     
     # Generate PDF
@@ -934,6 +973,8 @@ def get_invoice_pdf(
             for item in transaction.items
         ],
         'sales_person': transaction.sales_person or "",
+        'previous_balance': crud.get_partner_balance_at_date(db, transaction.partner_id, transaction.date) if transaction.partner_id else 0.0,
+        'amount_paid': float(transaction.amount_paid) if transaction.amount_paid else 0.0,
     }
     
     # Generate PDF
