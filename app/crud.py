@@ -293,9 +293,9 @@ def get_transactions(
     if search:
         # Search by transaction ID, partner name, SKU, or PRODUCT NAME
         search_pattern = f"%{search}%"
-        query = query.join(models.Partner, isouter=True)\
-                     .join(models.TransactionItem, isouter=True)\
-                     .join(models.Product, isouter=True).filter(
+        query = query.outerjoin(models.Partner)\
+                     .outerjoin(models.Transaction.items)\
+                     .outerjoin(models.TransactionItem.product).filter(
             or_(
                 cast(models.Transaction.id, String).ilike(search_pattern),
                 models.Partner.name.ilike(search_pattern),
