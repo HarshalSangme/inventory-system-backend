@@ -548,21 +548,35 @@ def get_accounts_summary(db: Session):
     }
 
 def get_partner_balance_at_date(db: Session, partner_id: int, target_date):
-    from sqlalchemy import func, case
-    
-    balance = db.query(
-        func.sum(
-            case(
-                (models.LedgerEntry.type == models.LedgerEntryType.DEBIT.value, models.LedgerEntry.amount),
-                else_=-models.LedgerEntry.amount
-            )
+    """Calculate how much a partner owes (positive) or is owed (negative) before a given date.
+    Computed from the transactions table directly so it works even for
+    old transactions that have no ledger entries."""
+    from sqlalchemy import func
+
+    # Sum of unpaid amounts for SALES to this partner before target_date
+    receivable = db.query(
+        func.coalesce(
+            func.sum(models.Transaction.total_amount - models.Transaction.amount_paid), 0
         )
     ).filter(
-        models.LedgerEntry.partner_id == partner_id,
-        models.LedgerEntry.date < target_date
+        models.Transaction.partner_id == partner_id,
+        models.Transaction.type == models.TransactionType.SALE.value,
+        models.Transaction.date < target_date
     ).scalar() or 0.0
-    
-    return balance
+
+    # Sum of unpaid amounts for PURCHASES from this partner before target_date
+    payable = db.query(
+        func.coalesce(
+            func.sum(models.Transaction.total_amount - models.Transaction.amount_paid), 0
+        )
+    ).filter(
+        models.Transaction.partner_id == partner_id,
+        models.Transaction.type == models.TransactionType.PURCHASE.value,
+        models.Transaction.date < target_date
+    ).scalar() or 0.0
+
+    # Positive = partner owes us (receivable), negative = we owe partner (payable)
+    return float(receivable) - float(payable)
 
 def get_partner_statement(db: Session, partner_id: int):
     # Fetch all ledger entries for a partner, ordered by date
