@@ -457,7 +457,7 @@ def generate_invoice_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         totals_data_bottom = [
             ('PREV BAL', f'{previous_balance:.3f}'),
             ('TOTAL DUE', f'{total_due:.3f}'),
-            ('PAID TODAY', f'{amount_paid:.3f}'),
+            ('PAID', f'{amount_paid:.3f}'),
         ]
         
         canvas_obj.setFillColor(BLACK)
