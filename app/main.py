@@ -647,6 +647,39 @@ def update_user(user_id: int, user: schemas.UserUpdate, db: Session = Depends(da
     return db_user
 
 # Product Endpoints
+
+@app.get("/products/next-sku")
+def get_next_sku(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    """
+    Returns the next available unique SKU (e.g. 'SKU-042') by:
+    1. Querying ALL existing SKU-NNN values directly from DB (no limit).
+    2. Building a set of used numbers.
+    3. Finding the smallest positive integer not in the set (gap-finding, O(n)).
+    Supports infinite SKU generation — no upper bound.
+    """
+    from sqlalchemy import text as sa_text
+    rows = db.execute(
+        sa_text("SELECT sku FROM products WHERE sku LIKE 'SKU-%'")
+    ).fetchall()
+
+    used_numbers = set()
+    for row in rows:
+        sku_val = row[0]
+        suffix = sku_val[4:]          # strip 'SKU-'
+        if suffix.isdigit():
+            used_numbers.add(int(suffix))
+
+    # Find the smallest positive integer not already used (gap-finding)
+    next_num = 1
+    while next_num in used_numbers:
+        next_num += 1
+
+    next_sku = f"SKU-{str(next_num).zfill(3)}"
+    return {"next_sku": next_sku}
+
 @app.get("/products/", response_model=schemas.PaginatedResponse[schemas.Product])
 def read_products(
     skip: int = 0, 
