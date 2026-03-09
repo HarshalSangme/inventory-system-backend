@@ -899,6 +899,21 @@ def export_report(
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
+# ======= Reset Payments =======
+@app.delete("/transactions/{transaction_id}/payments")
+def reset_payments(
+    transaction_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    """Delete all payment records for a transaction and reset it to unpaid."""
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Only admins can reset payments")
+    result = crud.reset_transaction_payment(db, transaction_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return {"message": "Payments reset successfully", "transaction_id": transaction_id, "payment_status": result.payment_status}
+
 # Invoice PDF Generation
 class InvoiceEditData(BaseModel):
     invoice_number: str

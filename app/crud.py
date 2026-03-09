@@ -514,6 +514,34 @@ def record_payment(db: Session, payment: schemas.PaymentCreate):
     db.refresh(db_payment)
     return db_payment
 
+def reset_transaction_payment(db: Session, transaction_id: int):
+    """Reset all payments for a transaction — deletes Payment records,
+    their related LedgerEntry records, and resets the transaction to unpaid."""
+    transaction = db.query(models.Transaction).filter(
+        models.Transaction.id == transaction_id
+    ).first()
+    if not transaction:
+        return None
+
+    # 1. Delete ledger entries linked to payments for this transaction
+    db.query(models.LedgerEntry).filter(
+        models.LedgerEntry.transaction_id == transaction_id,
+        models.LedgerEntry.payment_id != None  # noqa: E711 — only payment-related entries
+    ).delete(synchronize_session='fetch')
+
+    # 2. Delete all payment records for this transaction
+    db.query(models.Payment).filter(
+        models.Payment.transaction_id == transaction_id
+    ).delete(synchronize_session='fetch')
+
+    # 3. Reset the transaction itself
+    transaction.amount_paid = 0.0
+    transaction.payment_status = models.PaymentStatus.UNPAID.value
+
+    db.commit()
+    db.refresh(transaction)
+    return transaction
+
 def get_accounts_summary(db: Session):
     from sqlalchemy import func, case
     
