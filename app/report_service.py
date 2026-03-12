@@ -69,6 +69,28 @@ def get_sales_report_df(db: Session, from_date: Optional[str] = None, to_date: O
             })
             idx += 1
             
+    # Add a Total row at the bottom
+    if data:
+        total_gross = sum(row['Gross Amount'] for row in data)
+        total_discount = sum(row['Discount'] for row in data)
+        total_vat = sum(row['VAT'] for row in data)
+        total_net = sum(row['Net Amount'] for row in data)
+        
+        data.append({
+            'Sr. No.': '',
+            'Date': '',
+            'Customer': '',
+            'SKU Code': '',
+            'Item Name': 'TOTAL',
+            'Gross Amount': round(total_gross, 3),
+            'Discount': round(total_discount, 3),
+            'VAT': round(total_vat, 3),
+            'Net Amount': round(total_net, 3),
+            'Payment Method': '',
+            'Sales Person': '',
+            'Status': ''
+        })
+            
     return pd.DataFrame(data)
 
 def get_purchase_report_df(db: Session, from_date: Optional[str] = None, to_date: Optional[str] = None, search: Optional[str] = None):
