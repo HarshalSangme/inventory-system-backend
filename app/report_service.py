@@ -46,13 +46,23 @@ def get_sales_report_df(db: Session, from_date: Optional[str] = None, to_date: O
     for t in transactions:
         partner_name = t.partner.name if t.partner else 'Unknown'
         for item in t.items:
+            gross = item.price * item.quantity
+            discount = item.discount or 0.0
+            amt_after_disc = gross - discount
+            vat_percent = item.vat_percent or 0.0
+            vat = amt_after_disc * (vat_percent / 100.0)
+            net_amt = amt_after_disc + vat
+
             data.append({
                 'Sr. No.': idx,
                 'Date': t.date.strftime("%Y-%m-%d %H:%M"),
                 'Customer': partner_name,
                 'SKU Code': item.product.sku if item.product else '-',
                 'Item Name': item.product.name.upper() if item.product else '-',
-                'Amount': item.price * item.quantity,
+                'Gross Amount': round(gross, 3),
+                'Discount': round(discount, 3),
+                'VAT': round(vat, 3),
+                'Net Amount': round(net_amt, 3),
                 'Payment Method': t.payment_method or '-',
                 'Sales Person': t.sales_person or '-',
                 'Status': 'Completed'

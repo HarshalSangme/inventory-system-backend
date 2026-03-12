@@ -789,8 +789,8 @@ def read_transactions(
     skip: int = 0,
     limit: int = 25,
     type: Optional[str] = None,
-    date_from: Optional[datetime] = None,
-    date_to: Optional[datetime] = None,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
     partner_id: Optional[int] = None,
     payment_status: Optional[str] = None,
     search: Optional[str] = None,
@@ -807,10 +807,10 @@ def read_transactions(
         query = query.filter(models.Transaction.type == type)
     if partner_id:
         query = query.filter(models.Transaction.partner_id == partner_id)
-    if date_from:
-        query = query.filter(models.Transaction.date >= date_from)
-    if date_to:
-        query = query.filter(models.Transaction.date <= date_to)
+    if from_date:
+        query = query.filter(models.Transaction.date >= from_date)
+    if to_date:
+        query = query.filter(models.Transaction.date <= to_date)
     if payment_status:
         query = query.filter(models.Transaction.payment_status == payment_status)
 
