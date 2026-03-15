@@ -14,6 +14,7 @@ from sqlalchemy.orm import joinedload
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from .invoice_pdf import generate_invoice_pdf
+from .purchase_pdf import generate_purchase_pdf
 from .report_service import get_stock_report_df, get_sales_report_df, get_purchase_report_df, get_financial_report_df, export_df_to_excel, export_df_to_csv
 from .database import init_database
 import pandas as pd
@@ -1053,5 +1054,74 @@ def get_invoice_pdf(
         media_type="application/pdf",
         headers={
             "Content-Disposition": f"inline; filename=invoice_{invoice_number.replace('/', '_')}.pdf"
+        }
+    )
+
+@app.get("/transactions/{transaction_id}/purchase/pdf")
+def get_purchase_pdf(
+    transaction_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    """
+    Directly generate PDF for printing a purchase receipt.
+    """
+    # Get transaction with related data
+    transaction = db.query(models.Transaction).options(
+        joinedload(models.Transaction.partner),
+        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product)
+    ).filter(models.Transaction.id == transaction_id).first()
+    
+    if not transaction or transaction.type != models.TransactionType.PURCHASE:
+        raise HTTPException(status_code=404, detail="Purchase transaction not found")
+        
+    year = transaction.date.year
+    invoice_number = f"PUR/{year}/{transaction.id:03d}"
+    
+    edit_data = {
+        "invoice_number": invoice_number,
+        "payment_terms": "N/A",
+        "due_date": None,
+        "sales_person": transaction.sales_person or ""
+    }
+    
+    # Prepare details for PDF generator
+    invoice_data = {
+        'id': transaction.id,
+        'date': transaction.date.isoformat() if transaction.date else None,
+        'type': transaction.type,
+        'total_amount': float(transaction.total_amount) if transaction.total_amount else 0,
+        'vat_percent': float(transaction.vat_percent) if transaction.vat_percent else 0,
+        'partner': {
+            'name': transaction.partner.name if transaction.partner else '',
+            'address': transaction.partner.address if transaction.partner else '',
+            'phone': transaction.partner.phone if transaction.partner else '',
+        } if transaction.partner else {},
+        'items': [
+            {
+                'product': {
+                    'name': item.product.name if item.product else '',
+                    'sku': item.product.sku if item.product else '',
+                },
+                'quantity': item.quantity,
+                'price': float(item.price) if item.price else 0,
+                'discount': float(item.discount) if item.discount else 0,
+            }
+            for item in transaction.items
+        ],
+        'sales_person': transaction.sales_person or "",
+        'previous_balance': crud.get_partner_balance_at_date(db, transaction.partner_id, transaction.date) if transaction.partner_id else 0.0,
+        'amount_paid': float(transaction.amount_paid) if transaction.amount_paid else 0.0,
+    }
+    
+    # Generate PDF
+    pdf_buffer = generate_purchase_pdf(invoice_data, edit_data)
+    
+    # Return as streaming response
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"inline; filename=purchase_{invoice_number.replace('/', '_')}.pdf"
         }
     )
