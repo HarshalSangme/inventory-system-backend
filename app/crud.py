@@ -543,33 +543,35 @@ def reset_transaction_payment(db: Session, transaction_id: int):
     return transaction
 
 def get_accounts_summary(db: Session):
-    from sqlalchemy import func, case
-    
-    # Receivables (Money owed by customers - Sum of DEBITS minus sum of CREDITS for customers)
-    # Using ledger entries for more accurate and scalable calculation
+    from sqlalchemy import func
+
+    # Receivables = sum of (total_amount - amount_paid) for all SALE transactions
+    # This is always accurate regardless of ledger entry state
     total_receivables = db.query(
-        func.sum(
-            case(
-                (models.LedgerEntry.type == models.LedgerEntryType.DEBIT.value, models.LedgerEntry.amount),
-                else_=-models.LedgerEntry.amount
-            )
+        func.coalesce(
+            func.sum(models.Transaction.total_amount - models.Transaction.amount_paid), 0
         )
-    ).join(models.Partner).filter(
-        models.Partner.type == models.PartnerType.CUSTOMER.value
+    ).filter(
+        models.Transaction.type == models.TransactionType.SALE.value,
+        models.Transaction.payment_status.in_([
+            models.PaymentStatus.UNPAID.value,
+            models.PaymentStatus.PARTIAL.value
+        ])
     ).scalar() or 0.0
-    
-    # Payables (Money owed to vendors - Sum of CREDITS minus sum of DEBITS for vendors)
+
+    # Payables = sum of (total_amount - amount_paid) for all PURCHASE transactions
     total_payables = db.query(
-        func.sum(
-            case(
-                (models.LedgerEntry.type == models.LedgerEntryType.CREDIT.value, models.LedgerEntry.amount),
-                else_=-models.LedgerEntry.amount
-            )
+        func.coalesce(
+            func.sum(models.Transaction.total_amount - models.Transaction.amount_paid), 0
         )
-    ).join(models.Partner).filter(
-        models.Partner.type == models.PartnerType.VENDOR.value
+    ).filter(
+        models.Transaction.type == models.TransactionType.PURCHASE.value,
+        models.Transaction.payment_status.in_([
+            models.PaymentStatus.UNPAID.value,
+            models.PaymentStatus.PARTIAL.value
+        ])
     ).scalar() or 0.0
-    
+
     return {
         "total_receivables": total_receivables,
         "total_payables": total_payables
