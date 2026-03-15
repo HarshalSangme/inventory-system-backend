@@ -320,6 +320,16 @@ def get_transactions(
     return transactions, total
 
 def create_ledger_entry(db: Session, partner_id: int, amount: float, type: str, transaction_id: Optional[int] = None, payment_id: Optional[int] = None, description: Optional[str] = None):
+    # Duplicate prevention: check if an entry with the same transaction + type + payment already exists
+    if transaction_id is not None:
+        existing = db.query(models.LedgerEntry).filter(
+            models.LedgerEntry.transaction_id == transaction_id,
+            models.LedgerEntry.type == type,
+            models.LedgerEntry.payment_id == payment_id
+        ).first()
+        if existing:
+            return existing  # Skip duplicate — return the existing entry
+
     db_entry = models.LedgerEntry(
         partner_id=partner_id,
         transaction_id=transaction_id,
@@ -489,6 +499,18 @@ def get_dashboard_stats(db: Session):
         "top_customers": top_customers
     }
 def record_payment(db: Session, payment: schemas.PaymentCreate):
+    from datetime import datetime, timedelta
+    
+    # Anti-double-click guard: check if identical payment was made in the last 10 seconds
+    recent_duplicate = db.query(models.Payment).filter(
+        models.Payment.transaction_id == payment.transaction_id,
+        models.Payment.amount == payment.amount,
+        models.Payment.date >= datetime.utcnow() - timedelta(seconds=10)
+    ).first()
+    
+    if recent_duplicate:
+        return recent_duplicate # Safely return the already processed payment!
+
     db_payment = models.Payment(**payment.dict())
     db.add(db_payment)
     
