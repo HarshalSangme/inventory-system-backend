@@ -610,9 +610,15 @@ def get_partner_balance_at_date(db: Session, partner_id: int, target_date):
 
 def get_partner_statement(db: Session, partner_id: int):
     # Fetch all ledger entries for a partner, ordered by date
+    # Secondary sort: type DESC puts 'debit' before 'credit' (invoice before payment)
+    # Tertiary sort: id ASC for consistent ordering of same-date, same-type entries
     entries = db.query(models.LedgerEntry).filter(
         models.LedgerEntry.partner_id == partner_id
-    ).order_by(models.LedgerEntry.date.asc()).all()
+    ).order_by(
+        models.LedgerEntry.date.asc(),
+        models.LedgerEntry.type.desc(),
+        models.LedgerEntry.id.asc()
+    ).all()
     
     # Calculate running balance
     statement = []
