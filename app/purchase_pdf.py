@@ -494,6 +494,16 @@ def generate_purchase_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         # Start content below image
         y = height - top_offset - header_img_height - 15
         
+        # INCREASED GAP for centering the title
+        # title was initially too high, moving it down slightly
+        y_title = height - top_offset - header_img_height - 12
+        title_bar_width = 160
+        title_bar_x = (width - title_bar_width) / 2
+        title_bar_height = 18
+        
+        # Max width before hitting the title box
+        max_vendor_width = title_bar_x - MARGIN_LEFT - 10
+        
         # Vendor Details (Left side)
         vendor_x = MARGIN_LEFT
         vendor_name = str(customer_name)
@@ -501,20 +511,21 @@ def generate_purchase_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
         
         canvas_obj.setFillColor(BLACK)
         canvas_obj.setFont('Helvetica-Bold', 10) # Made less bulky
-        canvas_obj.drawString(vendor_x, y, vendor_name)
         
+        from reportlab.lib.utils import simpleSplit
+        name_lines = simpleSplit(vendor_name, 'Helvetica-Bold', 10, max_vendor_width)
+        for line in name_lines[:2]: # Max 2 lines for name
+            canvas_obj.drawString(vendor_x, y, line)
+            y -= 12
+            
         canvas_obj.setFont('Helvetica', 8)
-        y -= 12
-        canvas_obj.drawString(vendor_x, y, vendor_address)
-        y -= 10
+        address_lines = simpleSplit(vendor_address, 'Helvetica', 8, max_vendor_width)
+        for line in address_lines[:3]: # Max 3 lines for address
+            canvas_obj.drawString(vendor_x, y, line)
+            y -= 10
+            
         canvas_obj.drawString(vendor_x, y, f"TRN: {invoice_data.get('partner', {}).get('trn', '') or ''}")
-        
-        # INCREASED GAP for centering the title
-        # title was initially too high, moving it down slightly
-        y_title = height - top_offset - header_img_height - 12
-        title_bar_width = 160
-        title_bar_x = (width - title_bar_width) / 2
-        title_bar_height = 18
+        y -= 15 # Padding after TRN
         
         canvas_obj.setFillColor(WHITE)
         canvas_obj.rect(title_bar_x, y_title - title_bar_height, title_bar_width, title_bar_height, fill=1, stroke=1)
@@ -556,8 +567,9 @@ def generate_purchase_pdf(invoice_data: dict, edit_data: dict) -> BytesIO:
             canvas_obj.setFont('Helvetica', 7)
             canvas_obj.drawString(meta_box_x + col1_w + 3, row_y - meta_row_height + 4, value)
             
-        # Return the y position for the table, with some gap
-        return y - 50
+        # Return the lowest y position from either side for the table, with some gap
+        meta_bottom_y = meta_y - (len(meta_data) * meta_row_height)
+        return min(y, meta_bottom_y) - 20
     
     # ==================== RENDER PAGES ====================
     
