@@ -13,9 +13,9 @@ def update_transaction(db: Session, transaction_id: int, transaction: schemas.Tr
     # Update transaction fields
     db_transaction.type = transaction.type
     db_transaction.partner_id = transaction.partner_id
-    # Remove global VAT
     db_transaction.sales_person = transaction.sales_person
     db_transaction.payment_method = transaction.payment_method or "Cash"
+    db_transaction.vendor_invoice_no = getattr(transaction, 'vendor_invoice_no', None)
     # Recalculate total
     subtotal = 0
     total_discount = 0
@@ -365,7 +365,8 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
         partner_id=transaction.partner_id,
         total_amount=total,
         sales_person=transaction.sales_person,
-        payment_method=transaction.payment_method or "Cash"
+        payment_method=transaction.payment_method or "Cash",
+        vendor_invoice_no=getattr(transaction, 'vendor_invoice_no', None)
     )
     db.add(db_transaction)
     db.commit()

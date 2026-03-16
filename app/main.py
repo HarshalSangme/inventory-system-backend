@@ -1080,7 +1080,6 @@ def get_purchase_pdf(
     
     edit_data = {
         "invoice_number": invoice_number,
-        "payment_terms": "N/A",
         "due_date": None,
         "sales_person": transaction.sales_person or ""
     }
@@ -1090,6 +1089,8 @@ def get_purchase_pdf(
         'id': transaction.id,
         'date': transaction.date.isoformat() if transaction.date else None,
         'type': transaction.type,
+        'payment_method': transaction.payment_method or "Cash",
+        'vendor_invoice_no': transaction.vendor_invoice_no or "",
         'total_amount': float(transaction.total_amount) if transaction.total_amount else 0,
         'vat_percent': float(transaction.vat_percent) if transaction.vat_percent else 0,
         'partner': {

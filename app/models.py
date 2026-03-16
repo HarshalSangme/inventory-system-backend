@@ -95,6 +95,7 @@ class Transaction(Base):
     payment_method = Column(String, default="Cash")
     amount_paid = Column(Float, default=0.0)
     payment_status = Column(String, default=PaymentStatus.UNPAID.value)
+    vendor_invoice_no = Column(String, nullable=True)  # Vendor's own invoice number for purchases
 
     partner = relationship("Partner", back_populates="transactions")
     items = relationship("TransactionItem", back_populates="transaction")

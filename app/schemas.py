@@ -112,6 +112,7 @@ class TransactionCreate(BaseModel):
     amount_paid: Optional[float] = 0.0
     payment_channel: Optional[str] = "cash"
     payment_reference: Optional[str] = None
+    vendor_invoice_no: Optional[str] = None
 
 class PaymentBase(BaseModel):
     transaction_id: int
