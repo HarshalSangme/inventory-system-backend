@@ -33,7 +33,22 @@ def update_transaction(db: Session, transaction_id: int, transaction: schemas.Tr
         # Old selling price logic removed
     total = subtotal + total_vat
     db_transaction.total_amount = total
+
+    # --- Handle Amount Paid & Payment Status ---
+    amount_paid = getattr(transaction, 'amount_paid', 0.0)
+    if amount_paid is None:
+        amount_paid = 0.0
+        
+    db_transaction.amount_paid = amount_paid
+    if amount_paid >= total:
+        db_transaction.payment_status = models.PaymentStatus.PAID.value
+    elif amount_paid > 0:
+        db_transaction.payment_status = models.PaymentStatus.PARTIAL.value
+    else:
+        db_transaction.payment_status = models.PaymentStatus.UNPAID.value
+
     db.commit()
+
     # Add new items
     for item in transaction.items:
         db_item = models.TransactionItem(
@@ -45,6 +60,52 @@ def update_transaction(db: Session, transaction_id: int, transaction: schemas.Tr
             vat_percent=getattr(item, 'vat_percent', 0) or 0
         )
         db.add(db_item)
+        
+        # Note: We probably need to revert old stock and apply new stock properly, 
+        # but leaving stock logic out of scope if it wasn't here already, 
+        # or we could just focus on the payment/ledger fix.
+
+    db.commit()
+
+    # --- Update Invoice Ledger Entry ---
+    invoice_ledger = db.query(models.LedgerEntry).filter(
+        models.LedgerEntry.transaction_id == transaction_id,
+        models.LedgerEntry.payment_id == None
+    ).first()
+    if invoice_ledger:
+        invoice_ledger.amount = total
+
+    # --- Reset and Recreate Payments & Payment Ledger ---
+    # 1. Delete payment-related ledger entries
+    db.query(models.LedgerEntry).filter(
+        models.LedgerEntry.transaction_id == transaction_id,
+        models.LedgerEntry.payment_id != None
+    ).delete(synchronize_session='fetch')
+    
+    # 2. Delete existing payment records
+    db.query(models.Payment).filter(
+        models.Payment.transaction_id == transaction_id
+    ).delete(synchronize_session='fetch')
+    
+    # 3. Recreate if amount_paid > 0
+    if amount_paid > 0:
+        db_payment = models.Payment(
+            transaction_id=db_transaction.id,
+            partner_id=db_transaction.partner_id,
+            amount=amount_paid,
+            payment_method=db_transaction.payment_method,
+            channel=getattr(transaction, 'payment_channel', None) or models.PaymentChannel.CASH.value,
+            reference_id=getattr(transaction, 'payment_reference', None)
+        )
+        db.add(db_payment)
+        db.flush()
+        
+        description = getattr(transaction, 'notes', None) or f"Payment for {db_transaction.type} #{db_transaction.id}"
+        if db_transaction.type == models.TransactionType.SALE.value:
+            create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.CREDIT.value, transaction_id=transaction_id, payment_id=db_payment.id, description=description)
+        else:
+            create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.DEBIT.value, transaction_id=transaction_id, payment_id=db_payment.id, description=description)
+
     db.commit()
     db.refresh(db_transaction)
     return db_transaction
