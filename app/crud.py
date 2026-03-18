@@ -104,7 +104,9 @@ def update_transaction(db: Session, transaction_id: int, transaction: schemas.Tr
         if db_transaction.type == models.TransactionType.SALE.value:
             create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.CREDIT.value, transaction_id=transaction_id, payment_id=db_payment.id, description=description)
         else:
-            create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.DEBIT.value, transaction_id=transaction_id, payment_id=db_payment.id, description=description)
+            # For vendors, payment is normally a debit in double-entry payable, 
+            # but to match the client's (and the rest of the application's) mental model: Debt = DEBIT, Payment = CREDIT.
+            create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.CREDIT.value, transaction_id=transaction_id, payment_id=db_payment.id, description=description)
 
     db.commit()
     db.refresh(db_transaction)
@@ -484,10 +486,11 @@ def create_transaction(db: Session, transaction: schemas.TransactionCreate):
         if amount_paid > 0:
             create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.CREDIT.value, transaction_id=db_transaction.id, payment_id=db_payment.id, description=f"Payment Received for Sale #{db_transaction.id}")
     elif db_transaction.type == models.TransactionType.PURCHASE.value:
-        create_ledger_entry(db, db_transaction.partner_id, db_transaction.total_amount, models.LedgerEntryType.CREDIT.value, transaction_id=db_transaction.id, description=f"Purchase Invoice #{db_transaction.id}")
+        # Match client mental model: Invoice = DEBIT, Payment = CREDIT
+        create_ledger_entry(db, db_transaction.partner_id, db_transaction.total_amount, models.LedgerEntryType.DEBIT.value, transaction_id=db_transaction.id, description=f"Purchase Invoice #{db_transaction.id}")
         # 2. Record the payment if any
         if amount_paid > 0:
-            create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.DEBIT.value, transaction_id=db_transaction.id, payment_id=db_payment.id, description=f"Payment Sent for Purchase #{db_transaction.id}")
+            create_ledger_entry(db, db_transaction.partner_id, amount_paid, models.LedgerEntryType.CREDIT.value, transaction_id=db_transaction.id, payment_id=db_payment.id, description=f"Payment Sent for Purchase #{db_transaction.id}")
         
     db.commit()
     db.refresh(db_transaction)
@@ -592,7 +595,7 @@ def record_payment(db: Session, payment: schemas.PaymentCreate):
         if transaction.type == models.TransactionType.SALE.value:
             create_ledger_entry(db, transaction.partner_id, payment.amount, models.LedgerEntryType.CREDIT.value, transaction_id=transaction.id, payment_id=db_payment.id, description=description)
         else:
-            create_ledger_entry(db, transaction.partner_id, payment.amount, models.LedgerEntryType.DEBIT.value, transaction_id=transaction.id, payment_id=db_payment.id, description=description)
+            create_ledger_entry(db, transaction.partner_id, payment.amount, models.LedgerEntryType.CREDIT.value, transaction_id=transaction.id, payment_id=db_payment.id, description=description)
 
     db.commit()
     db.refresh(db_payment)
