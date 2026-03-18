@@ -118,6 +118,13 @@ def delete_transaction(db: Session, transaction_id: int):
         return False
     # Delete items first
     db.query(models.TransactionItem).filter(models.TransactionItem.transaction_id == transaction_id).delete()
+    
+    # Delete ledger entries
+    db.query(models.LedgerEntry).filter(models.LedgerEntry.transaction_id == transaction_id).delete()
+    
+    # Delete payments
+    db.query(models.Payment).filter(models.Payment.transaction_id == transaction_id).delete()
+    
     db.delete(db_transaction)
     db.commit()
     return True
