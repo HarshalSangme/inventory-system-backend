@@ -209,9 +209,9 @@ def get_category_profit_data(db: Session, from_date: Optional[str] = None, to_da
     result_list.sort(key=lambda x: x['Sales Revenue'], reverse=True)
     return result_list
 
-def get_financial_report_df(db: Session, from_date: Optional[str] = None, to_date: Optional[str] = None):
+def get_financial_report_df(db: Session, from_date: Optional[str] = None, to_date: Optional[str] = None, search: Optional[str] = None):
     # Retrieve the new optimized category data
-    result_list = get_category_profit_data(db, from_date, to_date)
+    result_list = get_category_profit_data(db, from_date, to_date, search)
     
     # Add Grand Totals to the export
     if result_list:

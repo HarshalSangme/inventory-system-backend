@@ -895,7 +895,7 @@ def export_report(
     elif report_type == "purchase":
         df = get_purchase_report_df(db, from_date=from_date, to_date=to_date, search=search)
     elif report_type == "profit":
-        df = get_financial_report_df(db, from_date=from_date, to_date=to_date)
+        df = get_financial_report_df(db, from_date=from_date, to_date=to_date, search=search)
     else:
         raise HTTPException(status_code=404, detail="Unknown report type")
 
