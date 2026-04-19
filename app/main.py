@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from .invoice_pdf import generate_invoice_pdf
 from .purchase_pdf import generate_purchase_pdf
-from .report_service import get_stock_report_df, get_sales_report_df, get_purchase_report_df, get_financial_report_df, export_df_to_excel, export_df_to_csv
+from .report_service import get_stock_report_df, get_sales_report_df, get_purchase_report_df, get_financial_report_df, export_df_to_excel, export_df_to_csv, get_category_profit_data
 from .database import init_database
 import pandas as pd
 import io
@@ -862,6 +862,20 @@ def create_transaction(transaction: schemas.TransactionCreate, db: Session = Dep
 @app.get("/dashboard")
 def get_dashboard(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     return crud.get_dashboard_stats(db)
+
+@app.get("/reports/profit")
+def get_profit_preview(
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    try:
+        data = get_category_profit_data(db, from_date=from_date, to_date=to_date, search=search)
+        return {"data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/reports/{report_type}/export")
 def export_report(

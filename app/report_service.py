@@ -122,44 +122,126 @@ def get_purchase_report_df(db: Session, from_date: Optional[str] = None, to_date
         })
     return pd.DataFrame(data)
 
-def get_financial_report_df(db: Session, from_date: Optional[str] = None, to_date: Optional[str] = None):
-    # Fetch all transactions or filtered by date
-    query = db.query(models.Transaction)
+def get_category_profit_data(db: Session, from_date: Optional[str] = None, to_date: Optional[str] = None, search: Optional[str] = None):
+    from sqlalchemy import func
+    from datetime import datetime
+    
+    # 1. Sales revenue and COGS grouped by category
+    sales_query = db.query(
+        models.Category.name.label('category_name'),
+        func.sum((models.TransactionItem.quantity * models.TransactionItem.price) - models.TransactionItem.discount).label('sales_revenue'),
+        func.sum(models.TransactionItem.quantity * models.Product.cost_price).label('cogs')
+    ).select_from(models.TransactionItem)\
+     .join(models.Transaction)\
+     .join(models.Product)\
+     .outerjoin(models.Category)\
+     .filter(models.Transaction.type == 'sale')
+
     if from_date:
         try:
             from_dt = datetime.strptime(from_date, "%Y-%m-%d")
-            query = query.filter(models.Transaction.date >= from_dt)
+            sales_query = sales_query.filter(models.Transaction.date >= from_dt)
         except: pass
     if to_date:
         try:
             to_dt = datetime.strptime(to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
-            query = query.filter(models.Transaction.date <= to_dt)
+            sales_query = sales_query.filter(models.Transaction.date <= to_dt)
         except: pass
         
-    transactions = query.all()
-    sales = [t for t in transactions if t.type == 'sale']
-    purchases = [t for t in transactions if t.type == 'purchase']
+    sales_query = sales_query.group_by(models.Category.name)
+    sales_data = sales_query.all()
     
-    total_revenue = sum(t.total_amount for t in sales)
-    total_cogs = 0
-    for t in sales:
-        for item in t.items:
-            if item.product:
-                total_cogs += item.quantity * item.product.cost_price
-                
-    profit = total_revenue - total_cogs
-    margin = (profit / total_revenue * 100) if total_revenue > 0 else 0
-    total_inventory_purchase = sum(t.total_amount for t in purchases)
+    # 2. Total stock in hand grouped by category
+    stock_query = db.query(
+        models.Category.name.label('category_name'),
+        func.sum(models.Product.stock_quantity * models.Product.cost_price).label('stock_value')
+    ).select_from(models.Product)\
+     .outerjoin(models.Category)\
+     .group_by(models.Category.name)
+     
+    stock_data = stock_query.all()
     
-    data = [{
-        'Total Sales Revenue': total_revenue,
-        'Total COGS': total_cogs,
-        'Gross Profit': profit,
-        'Profit Margin %': margin,
-        'Sales Transactions': len(sales),
-        'Inventory Purchases': total_inventory_purchase
-    }]
-    return pd.DataFrame(data)
+    # Merge data cleanly
+    merged_data = {}
+    
+    for row in stock_data:
+        cat_name = row.category_name or 'Uncategorized'
+        merged_data[cat_name] = {
+            'Category': cat_name,
+            'Sales Revenue': 0.0,
+            'Total COGS': 0.0,
+            'Gross Profit': 0.0,
+            'Profit Margin %': 0.0,
+            'Total STOCK IN HAND': float(row.stock_value or 0.0)
+        }
+        
+    for row in sales_data:
+        cat_name = row.category_name or 'Uncategorized'
+        if cat_name not in merged_data:
+            merged_data[cat_name] = {
+                'Category': cat_name,
+                'Sales Revenue': 0.0,
+                'Total COGS': 0.0,
+                'Gross Profit': 0.0,
+                'Profit Margin %': 0.0,
+                'Total STOCK IN HAND': 0.0
+            }
+            
+        revenue = float(row.sales_revenue or 0.0)
+        cogs = float(row.cogs or 0.0)
+        profit = revenue - cogs
+        margin = (profit / revenue * 100) if revenue > 0 else 0.0
+        
+        merged_data[cat_name]['Sales Revenue'] = round(revenue, 3)
+        merged_data[cat_name]['Total COGS'] = round(cogs, 3)
+        merged_data[cat_name]['Gross Profit'] = round(profit, 3)
+        merged_data[cat_name]['Profit Margin %'] = round(margin, 2)
+        
+    result_list = list(merged_data.values())
+    
+    if search:
+        search_lower = search.lower()
+        result_list = [r for r in result_list if search_lower in r['Category'].lower()]
+        
+    result_list.sort(key=lambda x: x['Sales Revenue'], reverse=True)
+    return result_list
+
+def get_financial_report_df(db: Session, from_date: Optional[str] = None, to_date: Optional[str] = None):
+    # Retrieve the new optimized category data
+    result_list = get_category_profit_data(db, from_date, to_date)
+    
+    # Add Grand Totals to the export
+    if result_list:
+        total_revenue = sum(r['Sales Revenue'] for r in result_list)
+        total_cogs = sum(r['Total COGS'] for r in result_list)
+        total_profit = sum(r['Gross Profit'] for r in result_list)
+        total_stock = sum(r['Total STOCK IN HAND'] for r in result_list)
+        total_margin = (total_profit / total_revenue * 100) if total_revenue > 0 else 0.0
+        
+        result_list.append({
+            'Category': 'GRAND TOTAL',
+            'Sales Revenue': round(total_revenue, 3),
+            'Total COGS': round(total_cogs, 3),
+            'Gross Profit': round(total_profit, 3),
+            'Profit Margin %': round(total_margin, 2),
+            'Total STOCK IN HAND': round(total_stock, 3)
+        })
+        
+    # Return matched directly to client's requested DataFrame columns
+    export_data = []
+    for r in result_list:
+        export_data.append({
+            'SALES REVENUE - CATEGORY WISE ( WITH TOTAL AMT )': r['Category'],
+            'Total Sales Revenue': r['Sales Revenue'],
+            'COGS CATEGORY WISE (WITH TOTAL AMT)': r['Category'],
+            'Total COGS': r['Total COGS'],
+            'Gross Profit': r['Gross Profit'],
+            'Profit Margin %': r['Profit Margin %'],
+            'STOCK CATEGORY WISE (WITH TOTAL AMT)': r['Category'],
+            'Total STOCK IN HAND': r['Total STOCK IN HAND']
+        })
+        
+    return pd.DataFrame(export_data)
 
 def export_df_to_excel(df: pd.DataFrame):
     output = io.BytesIO()
