@@ -129,7 +129,10 @@ def get_category_profit_data(db: Session, from_date: Optional[str] = None, to_da
     # 1. Sales revenue and COGS grouped by category
     sales_query = db.query(
         models.Category.name.label('category_name'),
-        func.sum((models.TransactionItem.quantity * models.TransactionItem.price) - models.TransactionItem.discount).label('sales_revenue'),
+        func.sum(
+            ((models.TransactionItem.quantity * models.TransactionItem.price) - models.TransactionItem.discount) * 
+            (1 + (models.TransactionItem.vat_percent / 100.0))
+        ).label('sales_revenue'),
         func.sum(models.TransactionItem.quantity * models.Product.cost_price).label('cogs')
     ).select_from(models.TransactionItem)\
      .join(models.Transaction)\
