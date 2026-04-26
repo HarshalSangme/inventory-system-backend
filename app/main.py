@@ -1151,6 +1151,19 @@ def read_expense_categories(skip: int = 0, limit: int = 100, db: Session = Depen
 def create_expense_category(category: schemas.ExpenseCategoryCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     return crud.create_expense_category(db=db, category=category)
 
+@app.put("/expense-categories/{category_id}", response_model=schemas.ExpenseCategory)
+def update_expense_category_endpoint(category_id: int, category: schemas.ExpenseCategoryCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    db_cat = crud.update_expense_category(db, category_id, category)
+    if not db_cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return db_cat
+
+@app.delete("/expense-categories/{category_id}")
+def delete_expense_category_endpoint(category_id: int, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    if not crud.delete_expense_category(db, category_id):
+        raise HTTPException(status_code=400, detail="Cannot delete category or category not found")
+    return {"message": "Category deleted"}
+
 @app.get("/expenses", response_model=schemas.PaginatedResponse[schemas.Expense])
 def read_expenses(skip: int = 0, limit: int = 100, search: Optional[str] = None, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     items, total = crud.get_expenses(db, skip=skip, limit=limit, search=search)
@@ -1159,6 +1172,13 @@ def read_expenses(skip: int = 0, limit: int = 100, search: Optional[str] = None,
 @app.post("/expenses", response_model=schemas.Expense)
 def create_expense_endpoint(expense: schemas.ExpenseCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     return crud.create_expense(db, expense)
+
+@app.put("/expenses/{expense_id}", response_model=schemas.Expense)
+def update_expense_endpoint(expense_id: int, expense: schemas.ExpenseCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    db_expense = crud.update_expense(db, expense_id, expense)
+    if not db_expense:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    return db_expense
 
 @app.delete("/expenses/{expense_id}")
 def delete_expense_endpoint(expense_id: int, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
