@@ -734,4 +734,78 @@ def get_partner_statement(db: Session, partner_id: int):
             "payment_id": entry.payment_id
         })
     
+    
     return statement[::-1] # Return most recent first
+
+# -- Expense Categories --
+def get_expense_categories(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.ExpenseCategory).offset(skip).limit(limit).all()
+
+def create_expense_category(db: Session, category: schemas.ExpenseCategoryCreate):
+    db_category = models.ExpenseCategory(**category.dict())
+    db.add(db_category)
+    db.commit()
+    db.refresh(db_category)
+    return db_category
+
+def update_expense_category(db: Session, category_id: int, category: schemas.ExpenseCategoryCreate):
+    db_cat = db.query(models.ExpenseCategory).filter(models.ExpenseCategory.id == category_id).first()
+    if not db_cat:
+        return None
+    for key, value in category.dict().items():
+        setattr(db_cat, key, value)
+    db.add(db_cat)
+    db.commit()
+    db.refresh(db_cat)
+    return db_cat
+
+def delete_expense_category(db: Session, category_id: int):
+    db_cat = db.query(models.ExpenseCategory).filter(models.ExpenseCategory.id == category_id).first()
+    if not db_cat:
+        return False
+    db.delete(db_cat)
+    db.commit()
+    return True
+
+# -- Expenses --
+def get_expenses(db: Session, skip: int = 0, limit: int = 100, search: Optional[str] = None):
+    query = db.query(models.Expense)
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.outerjoin(models.ExpenseCategory).filter(
+            or_(
+                models.Expense.voucher_no.ilike(search_pattern),
+                models.Expense.description.ilike(search_pattern),
+                models.ExpenseCategory.name.ilike(search_pattern)
+            )
+        )
+    total = query.count()
+    from sqlalchemy.orm import joinedload
+    query = query.options(joinedload(models.Expense.category))
+    query = query.order_by(models.Expense.date.desc())
+    items = query.offset(skip).limit(limit).all()
+    return items, total
+
+def get_expense(db: Session, expense_id: int):
+    from sqlalchemy.orm import joinedload
+    return db.query(models.Expense).options(joinedload(models.Expense.category)).filter(models.Expense.id == expense_id).first()
+
+def create_expense(db: Session, expense: schemas.ExpenseCreate):
+    expense_data = expense.dict(exclude_unset=True)
+    if not expense_data.get('voucher_no'):
+        import time
+        expense_data['voucher_no'] = f"EXP-{int(time.time() * 1000)}"
+        
+    db_expense = models.Expense(**expense_data)
+    db.add(db_expense)
+    db.commit()
+    db.refresh(db_expense)
+    return db_expense
+
+def delete_expense(db: Session, expense_id: int):
+    db_expense = db.query(models.Expense).filter(models.Expense.id == expense_id).first()
+    if not db_expense:
+        return False
+    db.delete(db_expense)
+    db.commit()
+    return True

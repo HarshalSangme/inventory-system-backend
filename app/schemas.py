@@ -170,3 +170,36 @@ class Transaction(BaseModel):
     ledger_entries: List[LedgerEntry] = []
     class Config:
         from_attributes = True
+
+class ExpenseCategoryBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class ExpenseCategoryCreate(ExpenseCategoryBase):
+    pass
+
+class ExpenseCategory(ExpenseCategoryBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class ExpenseBase(BaseModel):
+    voucher_no: Optional[str] = None
+    category_id: int
+    description: str
+    payment_mode: str
+    amount: float
+    approved_by: Optional[str] = None
+    remarks: Optional[str] = None
+
+class ExpenseCreate(ExpenseBase):
+    date: Optional[datetime] = None
+
+class Expense(ExpenseBase):
+    id: int
+    date: datetime
+    voucher_no: str
+    category: Optional[ExpenseCategory] = None
+    class Config:
+        from_attributes = True
+

@@ -207,11 +207,51 @@ def get_category_profit_data(db: Session, from_date: Optional[str] = None, to_da
         result_list = [r for r in result_list if search_lower in r['Category'].lower()]
         
     result_list.sort(key=lambda x: x['Sales Revenue'], reverse=True)
-    return result_list
+    
+    # 3. Operating Expenses
+    expense_query = db.query(
+        models.ExpenseCategory.name.label('expense_category_name'),
+        func.sum(models.Expense.amount).label('total_amount')
+    ).select_from(models.Expense)\
+     .outerjoin(models.ExpenseCategory)
+     
+    if from_date:
+        try:
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d")
+            expense_query = expense_query.filter(models.Expense.date >= from_dt)
+        except: pass
+    if to_date:
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            expense_query = expense_query.filter(models.Expense.date <= to_dt)
+        except: pass
+
+    expense_query = expense_query.group_by(models.ExpenseCategory.name)
+    expense_data_raw = expense_query.all()
+    
+    expenses_list = []
+    total_expenses = 0.0
+    for row in expense_data_raw:
+        amt = float(row.total_amount or 0.0)
+        expenses_list.append({
+            'Expense Category': row.expense_category_name or 'Uncategorized',
+            'Amount': round(amt, 3)
+        })
+        total_expenses += amt
+    
+    expenses_list.sort(key=lambda x: x['Amount'], reverse=True)
+    
+    return {
+        "profit_data": result_list,
+        "operating_expenses": expenses_list,
+        "total_operating_expenses": round(total_expenses, 3)
+    }
 
 def get_financial_report_df(db: Session, from_date: Optional[str] = None, to_date: Optional[str] = None, search: Optional[str] = None):
     # Retrieve the new optimized category data
-    result_list = get_category_profit_data(db, from_date, to_date, search)
+    api_response = get_category_profit_data(db, from_date, to_date, search)
+    result_list = api_response.get("profit_data", [])
+    total_expenses = api_response.get("total_operating_expenses", 0.0)
     
     # Add Grand Totals to the export
     if result_list:
@@ -232,17 +272,28 @@ def get_financial_report_df(db: Session, from_date: Optional[str] = None, to_dat
         
     # Return matched directly to client's requested DataFrame columns
     export_data = []
+    
+    # Attach operating expenses to the final summary row, or distribute it. Best is on Grand Total row
     for r in result_list:
-        export_data.append({
+        is_grand_total = r['Category'] == 'GRAND TOTAL'
+        row_data = {
             'SALES REVENUE - CATEGORY WISE ( WITH TOTAL AMT )': r['Category'],
             'Total Sales Revenue': r['Sales Revenue'],
             'COGS CATEGORY WISE (WITH TOTAL AMT)': r['Category'],
             'Total COGS': r['Total COGS'],
             'Gross Profit': r['Gross Profit'],
-            'Profit Margin %': r['Profit Margin %'],
             'STOCK CATEGORY WISE (WITH TOTAL AMT)': r['Category'],
             'Total STOCK IN HAND': r['Total STOCK IN HAND']
-        })
+        }
+        # Add the 5th column logic specifically requested (Gross Profit -> Operating Expenses -> Net Profit)
+        if is_grand_total:
+            row_data['Total Operating Expenses'] = total_expenses
+            row_data['NET PROFIT'] = r['Gross Profit'] - total_expenses
+        else:
+            row_data['Total Operating Expenses'] = ""
+            row_data['NET PROFIT'] = ""
+            
+        export_data.append(row_data)
         
     return pd.DataFrame(export_data)
 

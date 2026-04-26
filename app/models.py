@@ -152,3 +152,27 @@ class TransactionItem(Base):
 
     transaction = relationship("Transaction", back_populates="items")
     product = relationship("Product", back_populates="transaction_items")
+
+class ExpenseCategory(Base):
+    __tablename__ = "expense_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    description = Column(String, nullable=True)
+
+    expenses = relationship("Expense", back_populates="category")
+
+class Expense(Base):
+    __tablename__ = "expenses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(DateTime, default=datetime.utcnow)
+    voucher_no = Column(String, unique=True, index=True)
+    category_id = Column(Integer, ForeignKey("expense_categories.id"))
+    description = Column(String)
+    payment_mode = Column(String)
+    amount = Column(Float)
+    approved_by = Column(String, nullable=True)
+    remarks = Column(String, nullable=True)
+
+    category = relationship("ExpenseCategory", back_populates="expenses")

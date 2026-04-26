@@ -1140,3 +1140,28 @@ def get_purchase_pdf(
             "Content-Disposition": f"inline; filename=purchase_{invoice_number.replace('/', '_')}.pdf"
         }
     )
+
+# --- Operating Expenses API ---
+
+@app.get("/expense-categories", response_model=List[schemas.ExpenseCategory])
+def read_expense_categories(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    return crud.get_expense_categories(db, skip=skip, limit=limit)
+
+@app.post("/expense-categories", response_model=schemas.ExpenseCategory)
+def create_expense_category(category: schemas.ExpenseCategoryCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    return crud.create_expense_category(db=db, category=category)
+
+@app.get("/expenses", response_model=schemas.PaginatedResponse[schemas.Expense])
+def read_expenses(skip: int = 0, limit: int = 100, search: Optional[str] = None, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    items, total = crud.get_expenses(db, skip=skip, limit=limit, search=search)
+    return {"data": items, "total": total}
+
+@app.post("/expenses", response_model=schemas.Expense)
+def create_expense_endpoint(expense: schemas.ExpenseCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    return crud.create_expense(db, expense)
+
+@app.delete("/expenses/{expense_id}")
+def delete_expense_endpoint(expense_id: int, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    if not crud.delete_expense(db, expense_id):
+        raise HTTPException(status_code=404, detail="Expense not found")
+    return {"message": "Expense deleted"}
