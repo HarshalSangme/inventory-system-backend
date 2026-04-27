@@ -247,6 +247,61 @@ def get_category_profit_data(db: Session, from_date: Optional[str] = None, to_da
         "total_operating_expenses": round(total_expenses, 3)
     }
 
+def get_expense_report_df(db: Session, from_date: Optional[str] = None, to_date: Optional[str] = None, search: Optional[str] = None):
+    from sqlalchemy.orm import joinedload
+    # Base query for raw expense objects
+    query = db.query(models.Expense).options(joinedload(models.Expense.category))
+    
+    if from_date:
+        try:
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d")
+            query = query.filter(models.Expense.date >= from_dt)
+        except: pass
+    if to_date:
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            query = query.filter(models.Expense.date <= to_dt)
+        except: pass
+        
+    expenses = query.all()
+    
+    # Filter by search string if provided (on description or voucher no or category)
+    if search:
+        s = search.lower()
+        expenses = [e for e in expenses if 
+            (e.description and s in e.description.lower()) or 
+            (e.voucher_no and s in e.voucher_no.lower()) or
+            (e.category and s in e.category.name.lower())
+        ]
+        
+    export_data = []
+    total_amount = 0.0
+    for e in expenses:
+        amt = float(e.amount)
+        total_amount += amt
+        export_data.append({
+            'Date': e.date.strftime("%Y-%m-%d") if e.date else "",
+            'Voucher No': e.voucher_no,
+            'Category': e.category.name if e.category else "Uncategorized",
+            'Description': e.description,
+            'Payment Mode': e.payment_mode,
+            'Approved By': e.approved_by,
+            'Amount': round(amt, 3)
+        })
+        
+    if export_data:
+        export_data.append({
+            'Date': 'GRAND TOTAL',
+            'Voucher No': '',
+            'Category': '',
+            'Description': '',
+            'Payment Mode': '',
+            'Approved By': '',
+            'Amount': round(total_amount, 3)
+        })
+        
+    return pd.DataFrame(export_data)
+
 def get_financial_report_df(db: Session, from_date: Optional[str] = None, to_date: Optional[str] = None, search: Optional[str] = None):
     # Retrieve the new optimized category data
     api_response = get_category_profit_data(db, from_date, to_date, search)

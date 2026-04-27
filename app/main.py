@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from .invoice_pdf import generate_invoice_pdf
 from .purchase_pdf import generate_purchase_pdf
-from .report_service import get_stock_report_df, get_sales_report_df, get_purchase_report_df, get_financial_report_df, export_df_to_excel, export_df_to_csv, get_category_profit_data
+from .report_service import get_stock_report_df, get_sales_report_df, get_purchase_report_df, get_financial_report_df, get_expense_report_df, export_df_to_excel, export_df_to_csv, get_category_profit_data
 from .database import init_database
 import pandas as pd
 import io
@@ -896,6 +896,8 @@ def export_report(
         df = get_purchase_report_df(db, from_date=from_date, to_date=to_date, search=search)
     elif report_type == "profit":
         df = get_financial_report_df(db, from_date=from_date, to_date=to_date, search=search)
+    elif report_type == "expense":
+        df = get_expense_report_df(db, from_date=from_date, to_date=to_date, search=search)
     else:
         raise HTTPException(status_code=404, detail="Unknown report type")
 
@@ -1165,8 +1167,8 @@ def delete_expense_category_endpoint(category_id: int, db: Session = Depends(dat
     return {"message": "Category deleted"}
 
 @app.get("/expenses", response_model=schemas.PaginatedResponse[schemas.Expense])
-def read_expenses(skip: int = 0, limit: int = 100, search: Optional[str] = None, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
-    items, total = crud.get_expenses(db, skip=skip, limit=limit, search=search)
+def read_expenses(skip: int = 0, limit: int = 100, search: Optional[str] = None, from_date: Optional[str] = None, to_date: Optional[str] = None, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    items, total = crud.get_expenses(db, skip=skip, limit=limit, search=search, from_date=from_date, to_date=to_date)
     return {"data": items, "total": total}
 
 @app.post("/expenses", response_model=schemas.Expense)

@@ -768,8 +768,23 @@ def delete_expense_category(db: Session, category_id: int):
     return True
 
 # -- Expenses --
-def get_expenses(db: Session, skip: int = 0, limit: int = 100, search: Optional[str] = None):
-    query = db.query(models.Expense)
+def get_expenses(db: Session, skip: int = 0, limit: int = 100, search: Optional[str] = None, from_date: Optional[str] = None, to_date: Optional[str] = None):
+    from datetime import datetime
+    from sqlalchemy.orm import joinedload
+    from sqlalchemy import or_
+    query = db.query(models.Expense).options(joinedload(models.Expense.category))
+    
+    if from_date:
+        try:
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d")
+            query = query.filter(models.Expense.date >= from_dt)
+        except: pass
+    if to_date:
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            query = query.filter(models.Expense.date <= to_dt)
+        except: pass
+
     if search:
         search_pattern = f"%{search}%"
         query = query.outerjoin(models.ExpenseCategory).filter(
@@ -780,8 +795,6 @@ def get_expenses(db: Session, skip: int = 0, limit: int = 100, search: Optional[
             )
         )
     total = query.count()
-    from sqlalchemy.orm import joinedload
-    query = query.options(joinedload(models.Expense.category))
     query = query.order_by(models.Expense.date.desc())
     items = query.offset(skip).limit(limit).all()
     return items, total
