@@ -37,7 +37,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 # Category Endpoints
 @app.get("/categories/", response_model=schemas.PaginatedResponse[schemas.Category])
-def read_categories(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+def read_categories(skip: int = 0, limit: int = 1000, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_active_user)):
     categories, total = crud.get_categories(db, skip=skip, limit=limit)
     for category in categories:
         category.name = category.name.upper()

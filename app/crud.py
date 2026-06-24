@@ -151,10 +151,11 @@ def update_user(db: Session, user_id: int, user: schemas.UserUpdate):
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def get_categories(db: Session, skip: int = 0, limit: int = 100):
+def get_categories(db: Session, skip: int = 0, limit: int = 1000):
     total = db.query(models.Category).count()
-    items = db.query(models.Category).offset(skip).limit(limit).all()
+    items = db.query(models.Category).order_by(models.Category.name.asc()).offset(skip).limit(limit).all()
     return items, total
+
 
 def create_category(db: Session, category: schemas.CategoryCreate):
     db_category = models.Category(**category.dict())
